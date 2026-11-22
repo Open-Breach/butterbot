@@ -1,0 +1,42 @@
+schema: spec-driven
+
+context: |
+  Butterbot is a Rust console program: a run-once ACME certificate maintainer
+  with pluggable ACME servers, DNS providers and certificate stores.
+  This repository is public. Never commit real domain lists, tenant or
+  subscription ids, vault names, e-mail addresses or secrets. Examples use
+  example.com. Deployment configuration (the schedule, the real config file)
+  lives outside this repository.
+  Crate versions and APIs named in design documents are a snapshot. Check the
+  current documentation before relying on them.
+
+# Project context (optional)
+# Add only constraints that should guide OpenSpec artifacts and workflows.
+# Include constraints an agent cannot infer by reading the code.
+# Keep general project documentation and discoverable codebase facts out.
+# Example:
+#   context: |
+#     Designs and tasks must cover Windows, macOS, and Linux
+#     Write all artifacts in Spanish
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
