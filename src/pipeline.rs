@@ -24,10 +24,13 @@ use crate::store::{CertStore, StoredCert};
 mod certificate;
 mod providers;
 mod run;
+mod status;
 mod undo;
 
 pub use providers::ConfiguredProviders;
+pub(crate) use providers::http_client;
 pub use run::{RunOutcome, RunReport, Selection, run};
+pub use status::{CertificateStatus, Holding, Standing, StoreStatus, status};
 pub use undo::UndoStack;
 
 /// The steps a certificate goes through. The name of the step is in every

@@ -143,7 +143,10 @@ async fn guarded<T>(
 
 /// Runs `work` with a time limit when one is given. It is not ended when the
 /// run is asked to stop.
-async fn limited<T>(limit: Option<Duration>, work: impl Future<Output = Result<T>>) -> Result<T> {
+pub(super) async fn limited<T>(
+    limit: Option<Duration>,
+    work: impl Future<Output = Result<T>>,
+) -> Result<T> {
     match limit {
         None => work.await,
         Some(limit) => match tokio::time::timeout(limit, work).await {
@@ -153,6 +156,64 @@ async fn limited<T>(limit: Option<Duration>, work: impl Future<Output = Result<T
                 format_duration(limit)
             ))),
         },
+    }
+}
+
+/// What the decision for a certificate entry is, and what it was made from.
+pub(super) struct Assessment {
+    /// For each store, in the order of the entry, the renewal window the ACME
+    /// server gave for the certificate it holds.
+    pub windows: Vec<Option<RenewalWindow>>,
+    pub evaluation: Evaluation,
+}
+
+/// Decides whether the entry is due, from what its stores hold. The ACME
+/// server is asked for renewal information when that applies; nothing is
+/// changed anywhere.
+pub(super) async fn assess(
+    context: &RunContext,
+    entry: &Resolved<'_>,
+    forced: bool,
+    stored: &[Option<StoredCert>],
+    log: &StepLog,
+) -> Assessment {
+    let holds_any = stored.iter().any(Option::is_some);
+    let source = if entry.acme.ari && holds_any {
+        context
+            .providers
+            .renewal_info(&entry.certificate.acme, log)
+            .await
+    } else {
+        None
+    };
+    let mut windows: Vec<Option<RenewalWindow>> = Vec::with_capacity(stored.len());
+    for current in stored {
+        windows.push(match current {
+            Some(certificate) => lookup_renewal_window(source.as_deref(), certificate, log).await,
+            None => None,
+        });
+    }
+    let states: Vec<StoreState<'_>> = entry
+        .stores
+        .iter()
+        .zip(stored)
+        .zip(&windows)
+        .map(|((store, current), window)| StoreState {
+            store: store.name,
+            current: current.as_ref(),
+            renewal_window: *window,
+        })
+        .collect();
+    let evaluation = evaluate(&Input::for_entry(
+        entry,
+        context.min_reissue,
+        forced,
+        &states,
+        context.clock.now(),
+    ));
+    Assessment {
+        windows,
+        evaluation,
     }
 }
 
@@ -199,42 +260,11 @@ async fn steps(
 
     // --- Decide ---------------------------------------------------------------------
     let log = context.logger.step(name, Step::Decide.as_str());
-    let holds_any = state.stored.iter().any(Option::is_some);
-    let source = if entry.acme.ari && holds_any {
-        providers.renewal_info(&entry.certificate.acme, &log).await
-    } else {
-        None
-    };
-    let mut windows: Vec<Option<RenewalWindow>> = Vec::with_capacity(state.stored.len());
-    for current in &state.stored {
-        let window = match current {
-            Some(certificate) => {
-                let lookup =
-                    async { Ok(lookup_renewal_window(source.as_deref(), certificate, &log).await) };
-                guarded(context, Step::Decide, None, lookup).await?
-            }
-            None => None,
-        };
-        windows.push(window);
-    }
-    let states: Vec<StoreState<'_>> = entry
-        .stores
-        .iter()
-        .zip(&state.stored)
-        .zip(&windows)
-        .map(|((store, current), window)| StoreState {
-            store: store.name,
-            current: current.as_ref(),
-            renewal_window: *window,
-        })
-        .collect();
-    let evaluation = evaluate(&Input::for_entry(
-        entry,
-        context.min_reissue,
-        forced,
-        &states,
-        context.clock.now(),
-    ));
+    let assessment = async { Ok(assess(context, entry, forced, &state.stored, &log).await) };
+    let Assessment {
+        windows,
+        evaluation,
+    } = guarded(context, Step::Decide, None, assessment).await?;
     report_notes(&evaluation, &log);
     state.renewal_period = soonest_renewal_period(&state.stored, &evaluation);
 

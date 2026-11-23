@@ -59,7 +59,7 @@ impl ConfiguredProviders {
 
 /// The shared HTTP client: the bundled roots, and the extra root of every
 /// ACME server that has one, which only a test build can have.
-fn http_client(config: &Config) -> Result<reqwest::Client> {
+pub(crate) fn http_client(config: &Config) -> Result<reqwest::Client> {
     let mut extra_roots = Vec::new();
     for (name, server) in &config.acme {
         if let Some(path) = &server.extra_root {

@@ -106,6 +106,17 @@ impl Logger {
         )
     }
 
+    /// A logger that writes to standard error, for the commands whose
+    /// standard output is their result.
+    pub fn stderr(format: LogFormat, level: Level) -> Self {
+        Self::new(
+            format,
+            level,
+            Arc::new(SystemClock),
+            Box::new(std::io::stderr()),
+        )
+    }
+
     pub fn new(
         format: LogFormat,
         level: Level,
