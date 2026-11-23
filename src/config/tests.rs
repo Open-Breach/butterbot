@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::*;
 
+mod docs;
 mod env;
 mod files;
 mod model;
