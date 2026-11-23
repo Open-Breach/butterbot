@@ -189,6 +189,7 @@ fn parse_acme(reader: &mut Reader<'_>) -> Option<AcmeServer> {
     let renew_before = reader.duration("renew_before");
     let key_type = reader.parsed("key_type");
     let ari = reader.boolean("ari").unwrap_or(defaults::ARI);
+    let extra_root = test_support::acme_extra_root(reader);
     Some(AcmeServer {
         directory_url: directory_url?,
         access_key,
@@ -198,6 +199,7 @@ fn parse_acme(reader: &mut Reader<'_>) -> Option<AcmeServer> {
         renew_before,
         key_type,
         ari,
+        extra_root,
     })
 }
 
@@ -222,10 +224,13 @@ fn parse_dns(reader: &mut Reader<'_>) -> Option<DnsInstance> {
         "cloudflare" => Some(DnsProviderConfig::Cloudflare {
             access_key: reader.secret("access_key"),
         }),
-        unknown => {
-            reader.unknown_type(unknown, DnsProviderConfig::TYPES);
-            return None;
-        }
+        other => match test_support::dns_provider(other, reader) {
+            Some(provider) => provider,
+            None => {
+                reader.unknown_type(other, DnsProviderConfig::TYPES);
+                return None;
+            }
+        },
     };
     let ttl = reader
         .duration_in(
@@ -708,4 +713,43 @@ fn origin_note(value: &Value) -> String {
         .origin()
         .map(|origin| format!(" (set in {origin})"))
         .unwrap_or_default()
+}
+
+/// Settings that exist only for tests. A normal build accepts none of them:
+/// they are unknown keys and an unknown type there.
+mod test_support {
+    use std::path::PathBuf;
+
+    use super::{DnsProviderConfig, Reader};
+
+    /// Whether this build reads the test settings.
+    const ENABLED: bool = cfg!(any(test, feature = "test-support"));
+
+    /// `acme.<name>.ca_file`: a root certificate to trust for the server.
+    pub(super) fn acme_extra_root(reader: &mut Reader<'_>) -> Option<PathBuf> {
+        if !ENABLED {
+            return None;
+        }
+        reader.string("ca_file").map(PathBuf::from)
+    }
+
+    /// The DNS provider type `challtestsrv`. `None` when `type_name` is not a
+    /// test type or this build does not have them; `Some(None)` when it is
+    /// but a setting of it has a problem.
+    pub(super) fn dns_provider(
+        type_name: &str,
+        reader: &mut Reader<'_>,
+    ) -> Option<Option<DnsProviderConfig>> {
+        if !ENABLED || type_name != "challtestsrv" {
+            return None;
+        }
+        let management_url = reader.required_string("management_url");
+        let zones = reader.required_strings("zones");
+        Some(management_url.zip(zones).map(|(management_url, zones)| {
+            DnsProviderConfig::ChallTestSrv {
+                management_url,
+                zones,
+            }
+        }))
+    }
 }

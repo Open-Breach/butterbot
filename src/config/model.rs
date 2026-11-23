@@ -149,6 +149,10 @@ pub struct AcmeServer {
     pub renew_before: Option<Duration>,
     pub key_type: Option<KeyType>,
     pub ari: bool,
+    /// A file with a root certificate to trust for this server, besides the
+    /// bundled roots. Only a build with the `test-support` feature reads this
+    /// setting; it is what lets the program talk to the ACME test server.
+    pub extra_root: Option<PathBuf>,
 }
 
 /// A DNS provider instance (`dns.<name>`).
@@ -174,6 +178,12 @@ pub enum DnsProviderConfig {
     Cloudflare {
         access_key: Option<Secret>,
     },
+    /// The challenge DNS server of the ACME test server. Only a build with
+    /// the `test-support` feature accepts this type.
+    ChallTestSrv {
+        management_url: String,
+        zones: Vec<String>,
+    },
 }
 
 impl DnsProviderConfig {
@@ -183,6 +193,7 @@ impl DnsProviderConfig {
         match self {
             Self::AzureDns { .. } => "azure-dns",
             Self::Cloudflare { .. } => "cloudflare",
+            Self::ChallTestSrv { .. } => "challtestsrv",
         }
     }
 }

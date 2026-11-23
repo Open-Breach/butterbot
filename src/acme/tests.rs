@@ -828,9 +828,15 @@ mod issuance {
     async fn verdict_that_does_not_arrive_in_time_is_a_timeout() {
         // The server validates against a DNS server that never answers, so the
         // order stays pending for longer than the client waits.
-        let silent = UdpSocket::bind("127.0.0.1:0").expect("a socket nobody reads");
-        let address = silent.local_addr().unwrap();
-        let _silent_tcp = std::net::TcpListener::bind(address).expect("the same port over TCP");
+        // A port that is free for UDP can be taken for TCP; try until both are had.
+        let (_silent_udp, _silent_tcp, address) = (0..50)
+            .find_map(|_| {
+                let udp = UdpSocket::bind("127.0.0.1:0").ok()?;
+                let address = udp.local_addr().ok()?;
+                let tcp = std::net::TcpListener::bind(address).ok()?;
+                Some((udp, tcp, address))
+            })
+            .expect("a port that is free for UDP and TCP");
         let pebble = Pebble::start(address, &PebbleOptions::default());
         let (client, _) =
             AcmeClient::register("pebble", &pebble.directory_url, None, &pebble.http())

@@ -56,10 +56,28 @@ pub fn find_program(name: &str) -> PathBuf {
         })
 }
 
-/// A loopback address with a port that is free right now.
+/// A loopback address with a port that is free right now, and that this
+/// process has not handed out before.
+///
+/// The port is released again before it is returned, so that a server can
+/// take it. Tests run at the same time; without the second condition two of
+/// them could be given the same port, and the one whose server lost the port
+/// would talk to the server of the other.
 pub fn free_address() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("a free port on the loopback interface");
-    listener.local_addr().expect("the address of the listener")
+    static HANDED_OUT: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
+
+    loop {
+        let listener =
+            TcpListener::bind("127.0.0.1:0").expect("a free port on the loopback interface");
+        let address = listener.local_addr().expect("the address of the listener");
+        let mut handed_out = HANDED_OUT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !handed_out.contains(&address.port()) {
+            handed_out.push(address.port());
+            return address;
+        }
+    }
 }
 
 /// How many times a test server is started again, on other ports, when it
@@ -85,7 +103,11 @@ fn listens(process: &mut Process, what: &str, address: SocketAddr) -> bool {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    true
+    // Something listens at the address. If it is not this process, because
+    // the port was taken by someone else in the meantime, this process has
+    // failed to bind and is exiting; give it a moment to do so.
+    std::thread::sleep(Duration::from_millis(50));
+    !process.has_exited()
 }
 
 /// A child process that is killed when the value is dropped.
