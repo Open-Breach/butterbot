@@ -9,6 +9,11 @@ publish = false
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["test-util"] }
 
 [lints.rust]
 unsafe_code = "forbid"
