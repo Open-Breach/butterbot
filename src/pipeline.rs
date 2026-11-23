@@ -22,9 +22,11 @@ use crate::policy::RenewalInfoSource;
 use crate::store::{CertStore, StoredCert};
 
 mod certificate;
+mod providers;
 mod run;
 mod undo;
 
+pub use providers::ConfiguredProviders;
 pub use run::{RunOutcome, RunReport, Selection, run};
 pub use undo::UndoStack;
 

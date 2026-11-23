@@ -52,7 +52,7 @@ impl Config {
                     format!("dns.{name}.access_key"),
                     access_key.is_some(),
                 )),
-                DnsProviderConfig::AzureDns { .. } => {}
+                DnsProviderConfig::AzureDns { .. } | DnsProviderConfig::ChallTestSrv { .. } => {}
             }
         }
         secrets

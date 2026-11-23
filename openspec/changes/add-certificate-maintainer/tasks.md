@@ -65,7 +65,7 @@
 - [x] 8.3 Implement rate-limit handling (`run.retry_wait_max`, one wait, no further attempts) and per-step timeouts; verify with a fake ACME client for the short-wait, long-wait and hanging-service scenarios
 - [x] 8.4 Implement graceful stop (no new certificates, cancellation at safe points with undo, completion of store writes for issued certificates, immediate exit on a second signal); verify with tests that send signals at the propagation wait and after issuance
 - [x] 8.5 Implement the run outcome, the summary and the emission of `failure`, `renewed`, `expiring` and `run_completed`; verify the outcome and event scenarios, including no `run_completed` on interruption
-- [ ] 8.6 Add an integration test of a full run against the ACME test server with the directory store: first issuance, an immediate second run that does nothing, a renewal forced with `--only --force`, and a validation failure that leaves no challenge record behind
+- [x] 8.6 Add an integration test of a full run against the ACME test server with the directory store: first issuance, an immediate second run that does nothing, a renewal forced with `--only --force`, and a validation failure that leaves no challenge record behind
 
 ## 9. Command line
 

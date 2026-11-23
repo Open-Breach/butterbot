@@ -101,6 +101,24 @@ pub fn open(
             http.clone(),
             token.clone(),
         )),
+        #[cfg(any(test, feature = "test-support"))]
+        DnsProviderConfig::ChallTestSrv {
+            management_url,
+            zones,
+        } => {
+            let zones: Vec<&str> = zones.iter().map(String::as_str).collect();
+            std::sync::Arc::new(challtestsrv::ChallTestSrvProvider::new(
+                http.clone(),
+                management_url,
+                &zones,
+            ))
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        DnsProviderConfig::ChallTestSrv { .. } => {
+            return Err(Error::permanent(format!(
+                "the DNS provider {name} has a type that exists only in test builds"
+            )));
+        }
         DnsProviderConfig::Cloudflare { access_key: None } => {
             let path = format!("dns.{name}.access_key");
             return Err(Error::permanent(format!(

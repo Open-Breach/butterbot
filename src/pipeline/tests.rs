@@ -21,6 +21,7 @@ use crate::store::{IssuedCert, MemoryStore};
 use crate::{Error, Result};
 
 mod events;
+mod integration;
 mod pipeline;
 mod run_loop;
 mod waits;

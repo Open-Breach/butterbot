@@ -33,6 +33,7 @@ pub struct Accounts {
     /// The vault behind the Key Vault layer, when it is enabled.
     vault: Option<Arc<dyn SecretVault>>,
     outcomes: Mutex<HashMap<String, Outcome>>,
+    polling: Option<super::Polling>,
 }
 
 impl Accounts {
@@ -41,7 +42,20 @@ impl Accounts {
             http,
             vault,
             outcomes: Mutex::new(HashMap::new()),
+            polling: None,
         }
+    }
+
+    /// Changes how the clients poll their servers for results.
+    pub fn with_polling(mut self, polling: super::Polling) -> Self {
+        self.polling = Some(polling);
+        self
+    }
+
+    /// Whether an account can be had for `server`: its credentials are
+    /// configured, or the Key Vault layer is there to save new ones.
+    pub fn available(&self, server: &AcmeServer) -> bool {
+        server.access_key.is_some() || self.vault.is_some()
     }
 
     /// The client for the ACME server instance `name`, with its account.
@@ -62,7 +76,13 @@ impl Accounts {
             .or_default()
             .clone();
         outcome
-            .get_or_init(|| async { self.set_up(name, server, log).await.map(Arc::new) })
+            .get_or_init(|| async {
+                let client = self.set_up(name, server, log).await?;
+                Ok(Arc::new(match self.polling {
+                    Some(polling) => client.with_polling(polling),
+                    None => client,
+                }))
+            })
             .await
             .clone()
     }
@@ -150,6 +170,7 @@ mod tests {
             renew_before: None,
             key_type: None,
             ari: true,
+            extra_root: None,
         }
     }
 
