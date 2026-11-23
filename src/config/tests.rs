@@ -7,6 +7,7 @@ use super::*;
 mod env;
 mod files;
 mod model;
+mod vault;
 
 /// A configuration that sets every key the model has.
 pub(super) const FULL: &str = r#"
