@@ -8,6 +8,7 @@ mod env;
 mod files;
 mod model;
 mod resolve;
+mod secrets;
 mod validation;
 mod vault;
 

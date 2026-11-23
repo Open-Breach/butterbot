@@ -12,6 +12,7 @@ mod names;
 mod parse;
 mod resolve;
 mod secret;
+mod secrets;
 mod vault;
 
 pub use duration::{format_duration, parse_duration};
@@ -23,7 +24,8 @@ pub use load::{Loaded, load};
 pub use model::*;
 pub use names::{ENV_PREFIX, env_name, vault_name};
 pub use resolve::{Resolved, ResolvedStore};
-pub use secret::Secret;
+pub use secret::{PLACEHOLDER, Secret};
+pub use secrets::ExpectedSecret;
 pub use vault::{AzureSecretVault, SecretVault};
 
 impl Config {

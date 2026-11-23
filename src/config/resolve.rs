@@ -34,6 +34,14 @@ pub struct ResolvedStore<'a> {
 }
 
 impl Config {
+    /// Every certificate entry with the settings that apply to it.
+    pub fn resolve_all(&self) -> Vec<Resolved<'_>> {
+        self.certificates
+            .iter()
+            .map(|certificate| self.resolve(certificate))
+            .collect()
+    }
+
     /// Works out the settings that apply to `certificate`.
     ///
     /// # Panics

@@ -37,3 +37,30 @@ impl fmt::Display for Secret {
         f.write_str(PLACEHOLDER)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formatting_never_prints_the_value() {
+        let secret = Secret::new("hunter2");
+        for shown in [
+            format!("{secret}"),
+            format!("{secret:?}"),
+            format!("{secret:#?}"),
+            format!("{secret:>20}"),
+            format!("{:?}", Some(&secret)),
+            format!("{:?}", vec![secret.clone()]),
+            secret.to_string(),
+        ] {
+            assert!(!shown.contains("hunter2"), "{shown}");
+            assert!(shown.contains(PLACEHOLDER), "{shown}");
+        }
+    }
+
+    #[test]
+    fn value_is_available_only_through_expose() {
+        assert_eq!(Secret::new("hunter2").expose(), "hunter2");
+    }
+}
