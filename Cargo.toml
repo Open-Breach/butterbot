@@ -1,0 +1,11 @@
+[package]
+name = "butterbot"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "A run-once ACME certificate maintainer with pluggable ACME servers, DNS providers and certificate stores"
+repository = "https://github.com/Open-Breach/butterbot"
+publish = false
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
