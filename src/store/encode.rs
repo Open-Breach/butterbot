@@ -116,6 +116,49 @@ pub fn key_belongs_to(certificate: &StoredCert, key_pkcs8_der: &[u8]) -> bool {
     parsed.public_key().subject_public_key.data.as_ref() == key.der_bytes()
 }
 
+/// The kind of key a certificate has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAlgorithm {
+    /// An RSA key with a modulus of this many bits.
+    Rsa {
+        bits: u32,
+    },
+    EcdsaP256,
+    EcdsaP384,
+}
+
+/// The kind of key of a certificate, or an error for a kind Butterbot does
+/// not issue.
+pub fn key_algorithm(certificate: &StoredCert) -> Result<KeyAlgorithm, String> {
+    use x509_parser::oid_registry::{OID_EC_P256, OID_NIST_EC_P384};
+    use x509_parser::public_key::PublicKey;
+
+    let (_, parsed) = x509_parser::parse_x509_certificate(&certificate.der)
+        .map_err(|error| format!("not a certificate: {error}"))?;
+    let key = parsed.public_key();
+    match key
+        .parsed()
+        .map_err(|error| format!("unreadable public key: {error}"))?
+    {
+        PublicKey::RSA(rsa) => Ok(KeyAlgorithm::Rsa {
+            bits: rsa.key_size() as u32,
+        }),
+        PublicKey::EC(_) => {
+            let curve = key
+                .algorithm
+                .parameters
+                .as_ref()
+                .and_then(|curve| curve.as_oid().ok());
+            match curve {
+                Some(curve) if curve == OID_EC_P256 => Ok(KeyAlgorithm::EcdsaP256),
+                Some(curve) if curve == OID_NIST_EC_P384 => Ok(KeyAlgorithm::EcdsaP384),
+                _ => Err("an elliptic-curve key on a curve other than P-256 and P-384".to_owned()),
+            }
+        }
+        _ => Err("a key that is neither RSA nor ECDSA".to_owned()),
+    }
+}
+
 /// Reads the private key out of PEM text, as PKCS#8 DER.
 pub fn private_key_from_pem(text: &str) -> Result<Zeroizing<Vec<u8>>, String> {
     let blocks = pem::parse_many(text).map_err(|error| format!("not PEM: {error}"))?;

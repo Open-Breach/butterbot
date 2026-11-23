@@ -336,3 +336,40 @@ fn content_that_is_not_in_the_format_is_unreadable() {
         "{error}"
     );
 }
+
+#[test]
+fn key_algorithm_is_read_from_the_certificate() {
+    for (key_type, expected) in [
+        (KeyType::Rsa2048, KeyAlgorithm::Rsa { bits: 2048 }),
+        (KeyType::Rsa3072, KeyAlgorithm::Rsa { bits: 3072 }),
+        (KeyType::Rsa4096, KeyAlgorithm::Rsa { bits: 4096 }),
+        (KeyType::EcdsaP256, KeyAlgorithm::EcdsaP256),
+        (KeyType::EcdsaP384, KeyAlgorithm::EcdsaP384),
+    ] {
+        assert_eq!(
+            key_algorithm(issued(key_type).leaf()),
+            Ok(expected),
+            "{key_type}"
+        );
+    }
+}
+
+#[test]
+fn key_is_recognised_as_belonging_to_its_certificate_only() {
+    for key_type in [KeyType::Rsa2048, KeyType::EcdsaP256, KeyType::EcdsaP384] {
+        let certificate = issued(key_type);
+        let other = issued(key_type);
+        assert!(
+            key_belongs_to(certificate.leaf(), certificate.key_pkcs8_der()),
+            "{key_type}"
+        );
+        assert!(
+            !key_belongs_to(certificate.leaf(), other.key_pkcs8_der()),
+            "{key_type}"
+        );
+        assert!(
+            !key_belongs_to(certificate.leaf(), b"not a key"),
+            "{key_type}"
+        );
+    }
+}
