@@ -7,6 +7,7 @@ use super::*;
 mod env;
 mod files;
 mod model;
+mod resolve;
 mod validation;
 mod vault;
 

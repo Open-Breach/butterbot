@@ -10,6 +10,7 @@ mod load;
 mod model;
 mod names;
 mod parse;
+mod resolve;
 mod secret;
 mod vault;
 
@@ -21,6 +22,7 @@ pub use layer::Layer;
 pub use load::{Loaded, load};
 pub use model::*;
 pub use names::{ENV_PREFIX, env_name, vault_name};
+pub use resolve::{Resolved, ResolvedStore};
 pub use secret::Secret;
 pub use vault::{AzureSecretVault, SecretVault};
 
