@@ -7,6 +7,7 @@ use super::*;
 mod env;
 mod files;
 mod model;
+mod validation;
 mod vault;
 
 /// A configuration that sets every key the model has.

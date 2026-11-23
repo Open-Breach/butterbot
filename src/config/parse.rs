@@ -44,7 +44,13 @@ pub(super) fn parse(root: Value) -> Result<Config, ConfigError> {
     let dns = parse_instances("dns", root.remove("dns"), &mut problems, parse_dns);
     let stores = parse_instances("store", root.remove("store"), &mut problems, parse_store);
     parse_instances("notify", root.remove("notify"), &mut problems, parse_notify);
-    let certificates = parse_certificates(root.remove("certificate"), &mut problems);
+    let declared = Declared {
+        acme: &acme.declared,
+        dns: &dns.declared,
+        stores: &stores.declared,
+    };
+    let certificates = parse_certificates(root.remove("certificate"), &declared, &mut problems);
+    let (acme, dns, stores) = (acme.valid, dns.valid, stores.valid);
 
     for (key, value) in root {
         problems.push(format!(
@@ -103,15 +109,47 @@ fn parse_secrets(value: Option<Value>, problems: &mut Vec<String>) -> Secrets {
     secrets
 }
 
-/// Reads one of the tables of named instances. An instance that has a problem
-/// is left out of the result.
+/// The instances of one table.
+struct Instances<T> {
+    /// The instances that have no problem.
+    valid: BTreeMap<String, T>,
+    /// The name of every instance in the table, whether it has a problem or
+    /// not. A reference to an instance with a problem is not a dangling one.
+    declared: BTreeSet<String>,
+}
+
+/// The instance names a certificate entry may refer to.
+struct Declared<'a> {
+    acme: &'a BTreeSet<String>,
+    dns: &'a BTreeSet<String>,
+    stores: &'a BTreeSet<String>,
+}
+
+const NAME_RULE: &str = "a name consists of lowercase letters, digits and single dashes, and \
+                         starts and ends with a letter or digit";
+
+/// Whether `name` is a valid instance or certificate name.
+fn is_valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+}
+
+/// Reads one of the tables of named instances.
 fn parse_instances<T>(
     table_name: &str,
     value: Option<Value>,
     problems: &mut Vec<String>,
     parse_one: impl Fn(&mut Reader<'_>) -> Option<T>,
-) -> BTreeMap<String, T> {
-    let mut instances = BTreeMap::new();
+) -> Instances<T> {
+    let mut instances = Instances {
+        valid: BTreeMap::new(),
+        declared: BTreeSet::new(),
+    };
     let Some(value) = value else {
         return instances;
     };
@@ -125,13 +163,18 @@ fn parse_instances<T>(
     };
     let table: BTreeMap<String, Value> = table.into_iter().collect();
     for (name, value) in table {
+        instances.declared.insert(name.clone());
+        let named_well = is_valid_name(&name);
+        if !named_well {
+            problems.push(format!("{table_name}.{name}: invalid name: {NAME_RULE}"));
+        }
         let Some(mut reader) = Reader::new(format!("{table_name}.{name}"), value, problems) else {
             continue;
         };
         let instance = parse_one(&mut reader);
         reader.finish();
-        if let Some(instance) = instance {
-            instances.insert(name, instance);
+        if let Some(instance) = instance.filter(|_| named_well) {
+            instances.valid.insert(name, instance);
         }
     }
     instances
@@ -263,8 +306,12 @@ fn parse_notify(reader: &mut Reader<'_>) -> Option<()> {
     None
 }
 
-fn parse_certificates(value: Option<Value>, problems: &mut Vec<String>) -> Vec<Certificate> {
-    let mut certificates = Vec::new();
+fn parse_certificates(
+    value: Option<Value>,
+    declared: &Declared<'_>,
+    problems: &mut Vec<String>,
+) -> Vec<Certificate> {
+    let mut certificates: Vec<Certificate> = Vec::new();
     let Some(value) = value else {
         return certificates;
     };
@@ -277,30 +324,69 @@ fn parse_certificates(value: Option<Value>, problems: &mut Vec<String>) -> Vec<C
         ));
         return certificates;
     };
+    let mut seen = BTreeSet::new();
+    let mut duplicates = BTreeSet::new();
     for (index, entry) in entries.into_iter().enumerate() {
-        let location = match &entry.kind {
+        let name = match &entry.kind {
             ValueKind::Table(table) => match table.get("name").map(|name| &name.kind) {
-                Some(ValueKind::String(name)) => format!("certificate {name:?}"),
-                _ => format!("certificate #{}", index + 1),
+                Some(ValueKind::String(name)) => Some(name.clone()),
+                _ => None,
             },
-            _ => format!("certificate #{}", index + 1),
+            _ => None,
         };
+        let location = match &name {
+            Some(name) => format!("certificate {name:?}"),
+            None => format!("certificate #{}", index + 1),
+        };
+        if let Some(name) = name
+            && !seen.insert(name.clone())
+            && duplicates.insert(name.clone())
+        {
+            problems.push(format!(
+                "certificate {name:?} is defined more than once: certificate names are unique"
+            ));
+        }
         let Some(mut reader) = Reader::new(location, entry, problems) else {
             continue;
         };
-        let certificate = parse_certificate(&mut reader);
+        let certificate = parse_certificate(&mut reader, declared);
         reader.finish();
         certificates.extend(certificate);
     }
     certificates
 }
 
-fn parse_certificate(reader: &mut Reader<'_>) -> Option<Certificate> {
-    let name = reader.required_string("name");
-    let names = reader.required_strings("names");
-    let acme = reader.required_string("acme");
-    let dns = reader.required_string("dns");
-    let stores = reader.required_strings("stores");
+fn parse_certificate(reader: &mut Reader<'_>, declared: &Declared<'_>) -> Option<Certificate> {
+    let name = reader.required_string("name").filter(|name| {
+        let valid = is_valid_name(name);
+        if !valid {
+            reader.report("name", "", &format!("invalid name: {NAME_RULE}"));
+        }
+        valid
+    });
+    let names = reader.required_strings("names").filter(|names| {
+        if names.is_empty() {
+            reader.report("names", "", "must list at least one DNS name");
+        }
+        !names.is_empty()
+    });
+    let acme = reader
+        .required_string("acme")
+        .filter(|acme| reader.defined("acme", "ACME server", acme, declared.acme));
+    let dns = reader
+        .required_string("dns")
+        .filter(|dns| reader.defined("dns", "DNS provider", dns, declared.dns));
+    let stores = reader.required_strings("stores").filter(|stores| {
+        if stores.is_empty() {
+            reader.report("stores", "", "must list at least one store");
+        }
+        // Every store is checked, so that every dangling reference is reported.
+        let mut usable = !stores.is_empty();
+        for store in stores {
+            usable &= reader.defined("stores", "store", store, declared.stores);
+        }
+        usable
+    });
     let renew_before = reader.duration("renew_before");
     let key_type = reader.parsed("key_type");
     let profile = reader.string("profile");
@@ -559,6 +645,16 @@ impl<'p> Reader<'p> {
     fn required_strings(&mut self, key: &str) -> Option<Vec<String>> {
         let value = self.strings(key);
         self.required(key, value)
+    }
+
+    /// Checks that `name` is one of the `declared` instances and reports a
+    /// dangling reference otherwise.
+    fn defined(&mut self, key: &str, what: &str, name: &str, declared: &BTreeSet<String>) -> bool {
+        let defined = declared.contains(name);
+        if !defined {
+            self.report(key, "", &format!("the {what} {name:?} is not defined"));
+        }
+        defined
     }
 
     /// Reports an unknown `type` and stops reading the table: its other keys
