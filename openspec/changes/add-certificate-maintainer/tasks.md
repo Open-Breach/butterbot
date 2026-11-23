@@ -51,7 +51,7 @@
 
 ## 7. ACME issuance
 
-- [ ] 7.1 Add a test harness that starts the ACME test server and its challenge DNS server for integration tests, locally and in CI; verify a trivial test can fetch the server's directory
+- [x] 7.1 Add a test harness that starts the ACME test server and its challenge DNS server for integration tests, locally and in CI; verify a trivial test can fetch the server's directory
 - [ ] 7.2 Implement the ACME client wrapper: load account from credentials, register with optional external account binding, serialise credentials; verify against the test server that a second start reuses the account
 - [ ] 7.3 Implement account persistence per design D5 (save to the vault before ordering; fail the server's certificates if saving fails; no registration during `run` without a vault); verify the four scenarios of "Account registration on first use"
 - [ ] 7.4 Implement key generation for the five key types and CSR creation carrying only the DNS names; verify the issued test certificates have the requested key type and exactly the requested names
