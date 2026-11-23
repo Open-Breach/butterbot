@@ -44,4 +44,67 @@ jobs:
       # The tests that need the ACME test server are marked as ignored, so
       # that a plain `cargo test` works without it. Here they run.
       - name: Test against the ACME test server
-        run: cargo test --locked --all-features -- --include-ignored
+        run: cargo test --locked --features test-support -- --include-ignored
+
+  # The container image, on a machine of each platform it is built for.
+  image:
+    name: image (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Restore the ACME test server
+        id: pebble
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin
+          key: pebble-${{ env.PEBBLE_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Build the ACME test server
+        if: steps.pebble.outputs.cache-hit != 'true'
+        run: |
+          go install "github.com/letsencrypt/pebble/v2/cmd/pebble@${PEBBLE_VERSION}"
+          go install "github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@${PEBBLE_VERSION}"
+      - name: Build the image
+        run: docker build --tag butterbot:dev .
+      - name: Run the image
+        run: |
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' butterbot:dev)" = "${{ matrix.platform }}"
+          docker run --rm butterbot:dev --version
+      # The same program with the settings that point it at the ACME test
+      # server, for the tests that issue a certificate from a container.
+      - name: Build the image for the tests
+        run: docker build --target test --tag butterbot:test .
+      - name: Test the image
+        env:
+          BUTTERBOT_IMAGE: butterbot:dev
+          BUTTERBOT_TEST_IMAGE: butterbot:test
+        run: cargo test --locked --features container-tests --test container
+
+  # The reference CronJob in docs/deployment.md, given to a cluster.
+  manifest:
+    name: manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Take the manifest out of the document
+        run: |
+          awk '/^```yaml$/ { inside = 1; next } /^```$/ { inside = 0 } inside' docs/deployment.md > "$RUNNER_TEMP/butterbot.yaml"
+          grep --count '^kind: CronJob$' "$RUNNER_TEMP/butterbot.yaml"
+      - name: Start a cluster
+        run: kind create cluster --wait 120s
+      - name: Check the manifest
+        run: |
+          kubectl apply --dry-run=client --filename "$RUNNER_TEMP/butterbot.yaml"
+          # The cluster checks it as well, against the schema of each kind.
+          kubectl create namespace butterbot
+          kubectl apply --dry-run=server --filename "$RUNNER_TEMP/butterbot.yaml"

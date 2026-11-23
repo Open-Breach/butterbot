@@ -78,9 +78,9 @@
 
 ## 10. Container image
 
-- [ ] 10.1 Add a Dockerfile that builds a static binary for `linux/amd64` and `linux/arm64` and produces a minimal image running as a non-root user with `butterbot run` as the default command; verify both platforms build and that `docker run <image> --version` works on each
-- [ ] 10.2 Verify container behaviour: default command performs a run with a mounted configuration, arguments replace the default, a read-only root filesystem works, and stopping the container during a run produces exit code 3 with challenge records removed
-- [ ] 10.3 Write `docs/deployment.md` with a reference CronJob (daily schedule, `concurrencyPolicy: Forbid`, a run deadline, no automatic retries, a 60-second termination grace period, configuration from a ConfigMap, secrets from the environment or the vault) and the cutover steps from the design's migration plan; verify the manifest passes `kubectl apply --dry-run=client`
+- [x] 10.1 Add a Dockerfile that builds a static binary for `linux/amd64` and `linux/arm64` and produces a minimal image running as a non-root user with `butterbot run` as the default command; verify both platforms build and that `docker run <image> --version` works on each
+- [x] 10.2 Verify container behaviour: default command performs a run with a mounted configuration, arguments replace the default, a read-only root filesystem works, and stopping the container during a run produces exit code 3 with challenge records removed
+- [x] 10.3 Write `docs/deployment.md` with a reference CronJob (daily schedule, `concurrencyPolicy: Forbid`, a run deadline, no automatic retries, a 60-second termination grace period, configuration from a ConfigMap, secrets from the environment or the vault) and the cutover steps from the design's migration plan; verify the manifest passes `kubectl apply --dry-run=client`
 
 ## 11. Integration checks
 
