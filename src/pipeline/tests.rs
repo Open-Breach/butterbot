@@ -24,6 +24,7 @@ mod events;
 mod integration;
 mod pipeline;
 mod run_loop;
+mod status;
 mod waits;
 
 const NOW: OffsetDateTime = datetime!(2026-11-23 02:00:00 UTC);

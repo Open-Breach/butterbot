@@ -69,12 +69,12 @@
 
 ## 9. Command line
 
-- [ ] 9.1 Implement argument parsing for `run`, `status`, `check-config`, `account new`, the global options and usage errors (`--force` without `--only`, unknown certificate name); verify with command-line tests for each usage error
-- [ ] 9.2 Implement `status` with text and `--json` output and no side effects; verify against fake stores that due and not-due certificates are reported with reasons and that nothing is written
-- [ ] 9.3 Implement `check-config` using the validation and the expected-secrets listing, with no contact to ACME servers, DNS providers or stores; verify the two scenarios of its requirement
-- [ ] 9.4 Implement `account new` (register, print credentials with their source names, refuse when credentials exist); verify against the ACME test server
-- [ ] 9.5 Map outcomes to exit codes 0, 1, 2 and 3; verify each code with a command-line test
-- [ ] 9.6 Write the README: what Butterbot is, a quick start with the directory store, the commands and exit codes, links to the documents under `docs/`; verify every command shown in the README runs as written against the test setup
+- [x] 9.1 Implement argument parsing for `run`, `status`, `check-config`, `account new`, the global options and usage errors (`--force` without `--only`, unknown certificate name); verify with command-line tests for each usage error
+- [x] 9.2 Implement `status` with text and `--json` output and no side effects; verify against fake stores that due and not-due certificates are reported with reasons and that nothing is written
+- [x] 9.3 Implement `check-config` using the validation and the expected-secrets listing, with no contact to ACME servers, DNS providers or stores; verify the two scenarios of its requirement
+- [x] 9.4 Implement `account new` (register, print credentials with their source names, refuse when credentials exist); verify against the ACME test server
+- [x] 9.5 Map outcomes to exit codes 0, 1, 2 and 3; verify each code with a command-line test
+- [x] 9.6 Write the README: what Butterbot is, a quick start with the directory store, the commands and exit codes, links to the documents under `docs/`; verify every command shown in the README runs as written against the test setup
 
 ## 10. Container image
 
