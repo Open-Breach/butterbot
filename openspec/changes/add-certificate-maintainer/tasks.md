@@ -3,7 +3,7 @@
 ## 1. Project scaffold
 
 - [x] 1.1 Create the Rust binary crate `butterbot` with the module layout from design D17 and a `.gitignore`; verify `cargo build` succeeds and `butterbot --version` prints the crate version
-- [ ] 1.2 Add formatting and lint configuration; verify `cargo fmt --check` and `cargo clippy -- -D warnings` pass on the empty project
+- [x] 1.2 Add formatting and lint configuration; verify `cargo fmt --check` and `cargo clippy -- -D warnings` pass on the empty project
 - [ ] 1.3 Add a CI workflow that runs fmt, clippy and tests on every push and pull request; verify it passes on the scaffold commit
 - [ ] 1.4 Define the shared error type with the classes from design D11 (`Transient`, `Permanent`, `RateLimited`, `ValidationFailed`, `Timeout`) and the retry helper (3 attempts, growing pauses, transient only); verify with unit tests that only transient errors are retried and that the third failure is returned
 
