@@ -32,7 +32,8 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 tempfile = "3"
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "macros", "serde"] }
-tokio = { version = "1.54", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio = { version = "1.54", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = "0.7"
 toml = "1.2"
 webpki-roots = "1.0"
 x509-parser = "0.18"

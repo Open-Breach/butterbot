@@ -60,11 +60,11 @@
 
 ## 8. Run orchestration
 
-- [ ] 8.1 Implement the per-certificate pipeline with the step sequence and undo stack from design D6; verify with fake providers that a failure after "present records" runs cleanup, that undo order is last-in-first-out, and that a failing undo does not mask the original error
-- [ ] 8.2 Implement the run loop: selection with `--only`, failure isolation, the semaphore for `run.parallel` and the per-zone lock; verify with fake providers that one failure does not stop the others and that two certificates in one zone never overlap in their DNS steps
-- [ ] 8.3 Implement rate-limit handling (`run.retry_wait_max`, one wait, no further attempts) and per-step timeouts; verify with a fake ACME client for the short-wait, long-wait and hanging-service scenarios
-- [ ] 8.4 Implement graceful stop (no new certificates, cancellation at safe points with undo, completion of store writes for issued certificates, immediate exit on a second signal); verify with tests that send signals at the propagation wait and after issuance
-- [ ] 8.5 Implement the run outcome, the summary and the emission of `failure`, `renewed`, `expiring` and `run_completed`; verify the outcome and event scenarios, including no `run_completed` on interruption
+- [x] 8.1 Implement the per-certificate pipeline with the step sequence and undo stack from design D6; verify with fake providers that a failure after "present records" runs cleanup, that undo order is last-in-first-out, and that a failing undo does not mask the original error
+- [x] 8.2 Implement the run loop: selection with `--only`, failure isolation, the semaphore for `run.parallel` and the per-zone lock; verify with fake providers that one failure does not stop the others and that two certificates in one zone never overlap in their DNS steps
+- [x] 8.3 Implement rate-limit handling (`run.retry_wait_max`, one wait, no further attempts) and per-step timeouts; verify with a fake ACME client for the short-wait, long-wait and hanging-service scenarios
+- [x] 8.4 Implement graceful stop (no new certificates, cancellation at safe points with undo, completion of store writes for issued certificates, immediate exit on a second signal); verify with tests that send signals at the propagation wait and after issuance
+- [x] 8.5 Implement the run outcome, the summary and the emission of `failure`, `renewed`, `expiring` and `run_completed`; verify the outcome and event scenarios, including no `run_completed` on interruption
 - [ ] 8.6 Add an integration test of a full run against the ACME test server with the directory store: first issuance, an immediate second run that does nothing, a renewal forced with `--only --force`, and a validation failure that leaves no challenge record behind
 
 ## 9. Command line
