@@ -20,7 +20,7 @@ hickory-proto = "0.26"
 p12-keystore = "0.4"
 pem = "4"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "json", "query"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
@@ -35,6 +35,7 @@ zeroize = "1"
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["test-util"] }
+wiremock = "0.6"
 
 [lints.rust]
 unsafe_code = "forbid"
