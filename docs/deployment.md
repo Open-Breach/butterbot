@@ -262,6 +262,7 @@ What has been checked, and how:
 | First issuance, Azure DNS zone | `butterbot run --only <entry on Azure DNS>` | not yet run |
 | First issuance, Cloudflare zone | `butterbot run --only <entry on Cloudflare>` | not yet run |
 | The certificates are in the test vault and not due | `butterbot status` | not yet run |
+| A consumer reads a certificate from the vault and receives the certificate, its chain and the private key | `az keyvault secret show --vault-name <test vault> --name <entry> --query value` (the value is the PFX bundle, base64-encoded) | not yet run |
 | A second run does nothing | `butterbot run` | not yet run |
 | Forced renewal | `butterbot run --only <entry> --force` | not yet run |
 | Interruption: `SIGTERM` during the propagation wait gives exit code 3 and leaves no challenge record | `butterbot run --only <entry> --force`, then `SIGTERM` | not yet run |

@@ -252,7 +252,8 @@ async fn store_that_fails_for_a_moment_is_read_again() {
     assert_eq!(harness.journal.count("read one"), 3);
 }
 
-// configuration, "Missing secrets fail only what depends on them".
+// configuration, "Missing secrets fail only what depends on them", scenario "One
+// provider without credential" (with fake providers; with the real ones in tests/cli.rs).
 #[tokio::test(start_paused = true)]
 async fn missing_secret_fails_the_certificates_that_depend_on_it_and_no_others() {
     let harness = Harness::new(&[

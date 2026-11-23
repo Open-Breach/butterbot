@@ -275,7 +275,9 @@ fn account(files: &Files, acme: &AcmeTestServer) -> String {
 // ---------------------------------------------------------------------------
 
 // Task 10.1: the image runs on the platform it was built for.
-// container-image, "Supported platforms".
+// container-image, "Supported platforms", scenario "Arm64 node": CI runs this
+// test, and every other one in this file, on an arm64 machine with an image
+// that was built there.
 #[test]
 fn image_is_for_this_platform_and_prints_its_version() {
     let image = image();

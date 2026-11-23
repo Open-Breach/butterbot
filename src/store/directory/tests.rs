@@ -143,7 +143,9 @@ async fn certificate_is_held_in_the_format_it_was_written_in() {
     assert_eq!(store.current(NAME, Format::Pfx).await, Ok(None));
 }
 
-// certificate-stores, "Adoption of existing certificates".
+// certificate-stores, "Adoption of existing certificates", scenario "Certificate from
+// the previous tool": the store reports it; the run that leaves it alone is
+// `plain_run_evaluates_every_certificate_and_exits_with_0_when_none_is_due` in tests/cli.rs.
 #[tokio::test]
 async fn files_placed_by_another_tool_are_read_like_its_own() {
     let (directory, store) = store();

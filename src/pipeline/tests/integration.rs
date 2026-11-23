@@ -317,3 +317,56 @@ async fn validation_failure_fails_the_run_and_leaves_no_challenge_record_behind(
         .count();
     assert_eq!(orders, 1, "validation is attempted once per run");
 }
+
+// dns-validation, "Leftover values do not block validation", scenario "Run after an
+// interrupted run".
+#[tokio::test]
+#[ignore = "needs pebble and pebble-challtestsrv; see src/testing.rs"]
+async fn value_left_behind_by_a_killed_run_does_not_keep_the_next_run_from_validating() {
+    use crate::dns::DnsProvider;
+    use crate::dns::challtestsrv::ChallTestSrvProvider;
+
+    let deployment = Deployment::new(false).await;
+    // What a run leaves behind when it is killed after it published: a value
+    // at the name of the challenge record.
+    let provider = ChallTestSrvProvider::new(
+        deployment.acme.pebble.http(),
+        &deployment.acme.dns.management_url(),
+        &["example.com"],
+    );
+    let zone = crate::dns::Zone::new("example.com", "example.com");
+    provider
+        .present(
+            &zone,
+            RECORD,
+            &["left-behind-by-a-killed-run".to_owned()],
+            60,
+        )
+        .await
+        .expect("published");
+    assert_eq!(deployment.acme.dns.served_txt_values(RECORD).await, 1);
+
+    let (report, log) = deployment.run(&Selection::default()).await;
+
+    assert_eq!(
+        report.outcome,
+        RunOutcome::Success,
+        "{:#?}\n{}",
+        report.certificates,
+        log.text()
+    );
+    assert_eq!(
+        report.renewed(),
+        1,
+        "the new run validated with its own values"
+    );
+    assert_eq!(
+        deployment
+            .stored()
+            .names
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["*.example.com", "example.com"]
+    );
+}

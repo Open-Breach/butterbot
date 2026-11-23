@@ -43,6 +43,31 @@ fn with(entries: &[String]) -> String {
     format!("{PROVIDERS}{}", entries.concat())
 }
 
+// acme-issuance, "Any ACME server by configuration", scenario "Production and
+// staging side by side".
+#[test]
+fn production_and_staging_server_are_both_usable_by_name() {
+    let staging = entry("test", "cloudflare", "[\"local\"]", "")
+        .replace("acme = \"letsencrypt\"", "acme = \"letsencrypt-staging\"");
+    let config = from_toml(&with(&[
+        entry("live", "cloudflare", "[\"local\"]", ""),
+        staging,
+    ]))
+    .expect("valid");
+
+    let resolved = config.resolve_all();
+    assert_eq!(resolved[0].certificate.acme, "letsencrypt");
+    assert_eq!(
+        resolved[0].acme.directory_url,
+        "https://acme.example.com/directory"
+    );
+    assert_eq!(resolved[1].certificate.acme, "letsencrypt-staging");
+    assert_eq!(
+        resolved[1].acme.directory_url, "https://acme-staging.example.com/directory",
+        "each certificate uses the server it names"
+    );
+}
+
 // "Provider instances", scenario "Two instances of one type".
 #[test]
 fn two_instances_of_one_type_are_both_available() {
