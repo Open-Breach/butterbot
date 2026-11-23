@@ -354,10 +354,15 @@ dependencies = [
  "azure_identity",
  "azure_security_keyvault_certificates",
  "azure_security_keyvault_secrets",
+ "base64 0.22.1",
+ "bytes",
  "clap",
  "config",
  "futures-util",
  "hickory-proto",
+ "http",
+ "httpdate",
+ "instant-acme",
  "p12-keystore",
  "pem",
  "rcgen",
@@ -1068,6 +1073,8 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
+ "rustls-native-certs",
+ "rustls-platform-verifier",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -1219,6 +1226,31 @@ checksum = "3a580c13f0ffc335ef42dd3f6b1a41b726051c5e1656d9a3aa6fddb3c5dfbbf9"
 dependencies = [
  "block-padding",
  "hybrid-array",
+]
+
+[[package]]
+name = "instant-acme"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f05ad37c421b962354c358d347d4a6130151df9407978372d3ad7f0c8f71a64"
+dependencies = [
+ "async-trait",
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "bytes",
+ "http",
+ "http-body",
+ "http-body-util",
+ "httpdate",
+ "hyper-rustls",
+ "rcgen",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "x509-parser",
 ]
 
 [[package]]

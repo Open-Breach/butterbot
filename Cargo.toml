@@ -13,14 +13,19 @@ azure_core = { version = "1.1", default-features = false, features = ["reqwest",
 azure_identity = { version = "1.0", default-features = false, features = ["tokio"] }
 azure_security_keyvault_certificates = { version = "1.0", default-features = false }
 azure_security_keyvault_secrets = { version = "1.0", default-features = false }
+base64 = "0.22"
+bytes = "1"
 clap = { version = "4.6", features = ["derive"] }
 config = { version = "0.15", default-features = false }
 futures-util = "0.3"
 hickory-proto = "0.26"
+http = "1"
+httpdate = "1.0.3"
+instant-acme = { version = "0.8", default-features = false, features = ["aws-lc-rs", "x509-parser", "time"] }
 p12-keystore = "0.4"
 pem = "4"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "json", "query"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "json", "query", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }

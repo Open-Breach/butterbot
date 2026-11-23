@@ -26,7 +26,7 @@ pub use names::{ENV_PREFIX, env_name, vault_name};
 pub use resolve::{Resolved, ResolvedStore};
 pub use secret::{PLACEHOLDER, Secret};
 pub use secrets::ExpectedSecret;
-pub use vault::{AzureSecretVault, SecretVault};
+pub use vault::{AzureSecretVault, MemoryVault, SecretVault};
 
 impl Config {
     /// Builds the configuration from layers, each overriding the one before.
