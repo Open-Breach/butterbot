@@ -721,4 +721,101 @@ mod tests {
             );
         }
     }
+
+    /// Task 3.4: `docs/events.md` shows the events of the snapshot tests.
+    mod docs {
+        use time::macros::datetime;
+
+        use super::*;
+        use crate::logging::{Capture, LogFormat};
+
+        const DOCUMENT: &str = include_str!("../docs/events.md");
+
+        /// The content of the fenced blocks with the given language, in order.
+        fn blocks(language: &str) -> Vec<&'static str> {
+            let opening = format!("```{language}\n");
+            DOCUMENT
+                .split(opening.as_str())
+                .skip(1)
+                .map(|rest| rest.split("\n```").next().expect("the block is closed"))
+                .collect()
+        }
+
+        #[test]
+        fn json_examples_are_the_snapshot_events() {
+            let documented = blocks("json");
+            let events = [
+                examples::run_completed(),
+                examples::run_completed_nothing_due(),
+                examples::failure(),
+                examples::failure_nothing_stored(),
+                examples::renewed(),
+                examples::expiring(),
+            ];
+            assert_eq!(documented.len(), events.len(), "one example per snapshot");
+            for (text, event) in documented.iter().zip(&events) {
+                let example: Map<String, Value> =
+                    serde_json::from_str(text).unwrap_or_else(|error| panic!("{error}: {text}"));
+                let actual = event.to_json();
+                assert_eq!(example, actual, "the example of {}", event.kind());
+                assert_eq!(
+                    example.keys().collect::<Vec<_>>(),
+                    actual.keys().collect::<Vec<_>>(),
+                    "the fields of {} are shown in the order they are written",
+                    event.kind()
+                );
+            }
+        }
+
+        #[test]
+        fn every_field_of_every_event_is_described() {
+            for event in one_of_each() {
+                let section = DOCUMENT
+                    .split(&format!("\n## `{}`\n", event.kind()))
+                    .nth(1)
+                    .unwrap_or_else(|| panic!("{} has a section", event.kind()))
+                    .split("\n## ")
+                    .next()
+                    .expect("the section has content");
+                let described: Vec<&str> = section
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("| `")?.split('`').next())
+                    .collect();
+                let actual: Vec<String> = event
+                    .to_json()
+                    .keys()
+                    .filter(|name| !["event", "timestamp"].contains(&name.as_str()))
+                    .cloned()
+                    .collect();
+                assert_eq!(described, actual, "the field table of {}", event.kind());
+            }
+            for common in ["| `event` | text |", "| `timestamp` | text |"] {
+                assert!(DOCUMENT.contains(common), "{common}");
+            }
+        }
+
+        #[tokio::test]
+        async fn log_lines_are_what_the_log_sink_writes() {
+            let documented = blocks("text");
+            assert_eq!(documented.len(), 2, "one line per log format");
+            for (format, line) in [LogFormat::Json, LogFormat::Text]
+                .into_iter()
+                .zip(documented)
+            {
+                let capture = Capture::new();
+                let logger =
+                    capture.logger(format, Level::Info, datetime!(2026-11-23 02:01:00 UTC));
+                EventBus::new(logger).emit(examples::run_completed()).await;
+                assert_eq!(capture.lines(), [line], "{format:?}");
+            }
+        }
+
+        #[test]
+        fn documented_levels_are_the_levels_used() {
+            for event in one_of_each() {
+                let row = format!("| `{}` | `{}` |", event.kind(), event.level());
+                assert!(DOCUMENT.contains(&row), "{row}");
+            }
+        }
+    }
 }
