@@ -27,7 +27,7 @@
 
 ## 4. Certificate stores
 
-- [ ] 4.1 Define the `CertStore` trait, `StoredCert`, `IssuedCert` and `Format`, plus an in-memory store for tests; verify the in-memory store round-trips a certificate
+- [x] 4.1 Define the `CertStore` trait, `StoredCert`, `IssuedCert` and `Format`, plus an in-memory store for tests; verify the in-memory store round-trips a certificate
 - [ ] 4.2 Implement PEM and PKCS#12 encoding of certificate, chain and key for RSA and ECDSA keys; verify by decoding the output with an independent parser in tests, including the empty-password PKCS#12 case
 - [ ] 4.3 Implement the `directory` store with the layout, owner-only key file and atomic replacement from the spec; verify with tests on a temporary directory, including file modes and a reader during a write
 - [ ] 4.4 Implement the `azure-key-vault` store (`current` from the certificate's public part, `put` as an import with the matching content type and an exportable key); verify against recorded HTTP exchanges for present, absent, unreadable and import cases
