@@ -9,14 +9,14 @@
 
 ## 2. Configuration
 
-- [ ] 2.1 Define the typed configuration model (`run`, `secrets`, `acme.<name>`, `dns.<name>`, `store.<name>`, `notify.<name>`, `certificate[]`) with unknown fields denied and a duration type for `s`/`m`/`h`/`d`; verify with unit tests for a full valid file, an unknown key and an invalid duration
-- [ ] 2.2 Implement file loading: default path, `--config` (repeatable, later overrides earlier) and `BUTTERBOT_CONFIG`; verify with tests for the default path, two files setting the same key, and a missing file
-- [ ] 2.3 Implement the environment source with the mapping from design D3; verify with tests that `BUTTERBOT__ACME__LETSENCRYPT_STAGING__ACCESS_KEY` sets `acme.letsencrypt-staging.access_key` and overrides a file value
-- [ ] 2.4 Implement the Key Vault source, enabled only by `secrets.key_vault_url`, fetching only secrets under known top-level tables; verify with a fake vault client that unrelated secrets are not fetched, that vault overrides environment, and that an unreachable vault is a configuration error
-- [ ] 2.5 Implement validation: name alphabet and uniqueness, provider types, certificate references, key types, formats, and collection of all errors in one report; verify each scenario of the `configuration` spec's validation requirements with a test
-- [ ] 2.6 Implement default-and-override resolution for `renew_before`, `key_type`, `profile`, `format`, `propagation_timeout` and `settle`; verify with tests for certificate-level, provider-level and built-in values
-- [ ] 2.7 Implement the secret wrapper type and the "expected secrets" listing (path, environment name, Key Vault name, found or missing); verify that formatting a secret never prints its value and that the listing matches the spec's naming examples
-- [ ] 2.8 Write `docs/configuration.md` with a complete annotated example using `example.com` and the source-name rules; verify the example file in the document loads without errors in a test
+- [x] 2.1 Define the typed configuration model (`run`, `secrets`, `acme.<name>`, `dns.<name>`, `store.<name>`, `notify.<name>`, `certificate[]`) with unknown fields denied and a duration type for `s`/`m`/`h`/`d`; verify with unit tests for a full valid file, an unknown key and an invalid duration
+- [x] 2.2 Implement file loading: default path, `--config` (repeatable, later overrides earlier) and `BUTTERBOT_CONFIG`; verify with tests for the default path, two files setting the same key, and a missing file
+- [x] 2.3 Implement the environment source with the mapping from design D3; verify with tests that `BUTTERBOT__ACME__LETSENCRYPT_STAGING__ACCESS_KEY` sets `acme.letsencrypt-staging.access_key` and overrides a file value
+- [x] 2.4 Implement the Key Vault source, enabled only by `secrets.key_vault_url`, fetching only secrets under known top-level tables; verify with a fake vault client that unrelated secrets are not fetched, that vault overrides environment, and that an unreachable vault is a configuration error
+- [x] 2.5 Implement validation: name alphabet and uniqueness, provider types, certificate references, key types, formats, and collection of all errors in one report; verify each scenario of the `configuration` spec's validation requirements with a test
+- [x] 2.6 Implement default-and-override resolution for `renew_before`, `key_type`, `profile`, `format`, `propagation_timeout` and `settle`; verify with tests for certificate-level, provider-level and built-in values
+- [x] 2.7 Implement the secret wrapper type and the "expected secrets" listing (path, environment name, Key Vault name, found or missing); verify that formatting a secret never prints its value and that the listing matches the spec's naming examples
+- [x] 2.8 Write `docs/configuration.md` with a complete annotated example using `example.com` and the source-name rules; verify the example file in the document loads without errors in a test
 
 ## 3. Logging and events
 
