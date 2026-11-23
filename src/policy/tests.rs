@@ -786,6 +786,154 @@ fn certificate_is_expiring_with_less_than_half_its_renewal_period_left() {
     assert!(is_expiring(NOW - days(1), days(30), NOW), "already expired");
 }
 
+// --- Best-effort lookup of renewal information ----------------------------------------------------
+
+mod lookup {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::logging::{Capture, Level, LogFormat};
+    use crate::{Error, Result};
+
+    enum Answer {
+        Window(RenewalWindow),
+        NotOffered,
+        Fails(Error),
+        Hangs,
+    }
+
+    struct Source {
+        answer: Answer,
+        asked: Mutex<u32>,
+    }
+
+    impl Source {
+        fn new(answer: Answer) -> Self {
+            Self {
+                answer,
+                asked: Mutex::new(0),
+            }
+        }
+
+        fn asked(&self) -> u32 {
+            *self.asked.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl RenewalInfoSource for Source {
+        async fn renewal_window(&self, _certificate: &StoredCert) -> Result<Option<RenewalWindow>> {
+            *self.asked.lock().unwrap() += 1;
+            match &self.answer {
+                Answer::Window(window) => Ok(Some(*window)),
+                Answer::NotOffered => Ok(None),
+                Answer::Fails(error) => Err(error.clone()),
+                Answer::Hangs => std::future::pending().await,
+            }
+        }
+    }
+
+    fn log() -> (Capture, StepLog) {
+        let capture = Capture::new();
+        let logger = capture.logger(LogFormat::Json, Level::Info, NOW);
+        (capture, logger.step("example-com", "decide"))
+    }
+
+    #[tokio::test]
+    async fn window_the_server_gives_is_returned() {
+        let window = RenewalWindow {
+            start: NOW - days(1),
+            end: NOW + days(1),
+        };
+        let source = Source::new(Answer::Window(window));
+        let (capture, log) = log();
+
+        let found = lookup_renewal_window(Some(&source), &expiring_in(50), &log).await;
+
+        assert_eq!(found, Some(window));
+        assert!(capture.lines().is_empty());
+    }
+
+    // "Earlier renewal at the CA's request", scenario "Renewal information switched off".
+    #[tokio::test]
+    async fn server_is_not_asked_when_renewal_information_is_switched_off() {
+        let (capture, log) = log();
+        // No source is what `ari = false` gives; there is nothing that could be asked.
+        assert_eq!(
+            lookup_renewal_window(None, &expiring_in(50), &log).await,
+            None
+        );
+        assert!(capture.lines().is_empty());
+    }
+
+    #[tokio::test]
+    async fn server_that_offers_no_renewal_information_gives_none() {
+        let source = Source::new(Answer::NotOffered);
+        let (capture, log) = log();
+        assert_eq!(
+            lookup_renewal_window(Some(&source), &expiring_in(50), &log).await,
+            None
+        );
+        assert_eq!(source.asked(), 1);
+        assert!(
+            capture.lines().is_empty(),
+            "that is not a failure and needs no record"
+        );
+    }
+
+    // "Renewal information is best effort", scenario "Server does not know the certificate".
+    #[tokio::test]
+    async fn failing_lookup_leaves_the_decision_to_the_renewal_period() {
+        for failure in [
+            Error::permanent("the server does not know the certificate"),
+            Error::transient("connection reset"),
+            Error::rate_limited("too many requests", Some(Duration::from_secs(60))),
+        ] {
+            let source = Source::new(Answer::Fails(failure.clone()));
+            let (capture, log) = log();
+            let existing = expiring_in(50);
+
+            let window = lookup_renewal_window(Some(&source), &existing, &log).await;
+
+            assert_eq!(window, None, "any error is no information");
+            assert_eq!(source.asked(), 1, "the lookup is not repeated");
+            let state = StoreState {
+                store: "vault",
+                current: Some(&existing),
+                renewal_window: window,
+            };
+            assert_eq!(
+                decide(&[state]),
+                Decision::NotDue {
+                    due_at: NOW + days(20)
+                },
+                "the certificate is judged by the renewal period alone and does not fail"
+            );
+            let records = capture.json();
+            assert_eq!(records.len(), 1);
+            assert_eq!(
+                records[0]["level"], "info",
+                "not an error: the certificate is fine"
+            );
+            assert_eq!(records[0]["reason"], failure.to_string());
+            assert_eq!(records[0]["certificate"], "example-com");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn server_that_does_not_answer_gives_none_after_the_time_limit() {
+        let source = Source::new(Answer::Hangs);
+        let (capture, log) = log();
+        let started = tokio::time::Instant::now();
+
+        let window = lookup_renewal_window(Some(&source), &expiring_in(50), &log).await;
+
+        assert_eq!(window, None);
+        assert_eq!(started.elapsed(), RENEWAL_INFO_TIMEOUT);
+        assert_eq!(capture.json()[0]["reason"], "no answer after 30s");
+    }
+}
+
 #[test]
 fn stores_are_listed_with_their_renewal_periods() {
     let existing = expiring_in(60);

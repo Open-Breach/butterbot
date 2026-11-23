@@ -11,10 +11,12 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use time::OffsetDateTime;
 
 use crate::clock::format_utc;
 use crate::config::format_duration;
+use crate::logging::StepLog;
 use crate::store::StoredCert;
 
 /// The window in which an ACME server suggests replacing a certificate.
@@ -347,6 +349,48 @@ pub fn format_days(duration: Duration) -> String {
 /// period left, or has expired.
 pub fn is_expiring(expiry: OffsetDateTime, renewal_period: Duration, now: OffsetDateTime) -> bool {
     expiry - now < renewal_period / 2
+}
+
+/// Something that can be asked for an ACME server's renewal information.
+#[async_trait]
+pub trait RenewalInfoSource: Send + Sync {
+    /// The window in which the server suggests replacing `certificate`, or
+    /// `None` when the server offers no renewal information.
+    async fn renewal_window(
+        &self,
+        certificate: &StoredCert,
+    ) -> crate::Result<Option<RenewalWindow>>;
+}
+
+/// How long a renewal-information lookup may take.
+pub const RENEWAL_INFO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Looks up the renewal window of a stored certificate, best effort.
+///
+/// `source` is `None` when renewal information is switched off for the ACME
+/// server; the server is then not asked. Any failure, and a server that does
+/// not answer in time, gives `None`: the certificate is then judged by the
+/// other rules, and it does not fail.
+pub async fn lookup_renewal_window(
+    source: Option<&dyn RenewalInfoSource>,
+    certificate: &StoredCert,
+    log: &StepLog,
+) -> Option<RenewalWindow> {
+    let source = source?;
+    let lookup = tokio::time::timeout(RENEWAL_INFO_TIMEOUT, source.renewal_window(certificate));
+    let reason = match lookup.await {
+        Ok(Ok(window)) => return window,
+        Ok(Err(error)) => error.to_string(),
+        Err(_) => format!("no answer after {}s", RENEWAL_INFO_TIMEOUT.as_secs()),
+    };
+    log.record(
+        crate::logging::Level::Info,
+        "renewal information is not available; the renewal period alone decides",
+    )
+    .field("serial", certificate.serial.as_str())
+    .reason(reason)
+    .write();
+    None
 }
 
 #[cfg(test)]
