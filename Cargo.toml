@@ -1,0 +1,26 @@
+[package]
+name = "butterbot"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "A run-once ACME certificate maintainer with pluggable ACME servers, DNS providers and certificate stores"
+repository = "https://github.com/Open-Breach/butterbot"
+publish = false
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["test-util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
