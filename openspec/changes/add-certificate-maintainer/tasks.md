@@ -35,9 +35,9 @@
 
 ## 5. Renewal policy
 
-- [ ] 5.1 Implement the decision function over (configuration, per-store `StoredCert`, clock, optional renewal information) returning due or not due with a reason and the time it becomes due; verify every scenario of the `renewal-policy` spec with a unit test using a fixed clock
-- [ ] 5.2 Implement the `renew_before` cap and warning relative to the stored certificate's validity period; verify the two scenarios of that requirement
-- [ ] 5.3 Implement the reissue guard and the forced-issuance override; verify the guard's four scenarios and the force scenario
+- [x] 5.1 Implement the decision function over (configuration, per-store `StoredCert`, clock, optional renewal information) returning due or not due with a reason and the time it becomes due; verify every scenario of the `renewal-policy` spec with a unit test using a fixed clock
+- [x] 5.2 Implement the `renew_before` cap and warning relative to the stored certificate's validity period; verify the two scenarios of that requirement
+- [x] 5.3 Implement the reissue guard and the forced-issuance override; verify the guard's four scenarios and the force scenario
 - [ ] 5.4 Implement the best-effort renewal-information lookup wrapper that turns any error into "no information"; verify a failing lookup leaves the decision to the renewal period and does not fail the certificate
 
 ## 6. DNS validation
