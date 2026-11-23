@@ -46,7 +46,7 @@
 - [x] 6.2 Implement the propagation checker (zone cut and nameserver discovery, CNAME following, direct queries with TCP fallback, polling, timeout, `authoritative`, `resolver` and `off` modes, diagnostics); verify against an in-process DNS server for agreement, one lagging server, extra values, delegation and timeout
 - [x] 6.3 Implement the `cloudflare` provider (list zones, add TXT values, remove exactly the added records); verify against recorded HTTP exchanges, including a foreign value at the same name that must survive cleanup
 - [x] 6.4 Implement the `azure-dns` provider over the Resource Manager REST API (list zones, read-modify-write of the TXT record set, removal of own values, deletion of an emptied record set); verify against recorded HTTP exchanges, including the wildcard-plus-apex case with two values
-- [ ] 6.5 Implement a test DNS provider that drives the ACME test server's challenge DNS server; verify a TXT value set through it is returned by a DNS query
+- [x] 6.5 Implement a test DNS provider that drives the ACME test server's challenge DNS server; verify a TXT value set through it is returned by a DNS query
 - [ ] 6.6 Document each provider's settings and the required permissions from design D19 in `docs/providers.md`; verify every setting accepted by the configuration model appears in the document
 
 ## 7. ACME issuance

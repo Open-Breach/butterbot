@@ -9,6 +9,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # The version of the ACME test server (Pebble) the integration tests run against.
+  PEBBLE_VERSION: v2.10.3
 
 jobs:
   check:
@@ -20,9 +22,26 @@ jobs:
       - name: Install the Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - name: Restore the ACME test server
+        id: pebble
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin
+          key: pebble-${{ env.PEBBLE_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Build the ACME test server
+        if: steps.pebble.outputs.cache-hit != 'true'
+        run: |
+          go install "github.com/letsencrypt/pebble/v2/cmd/pebble@${PEBBLE_VERSION}"
+          go install "github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@${PEBBLE_VERSION}"
       - name: Format
         run: cargo fmt --all --check
       - name: Lint
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: |
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Test
         run: cargo test --locked
+      # The tests that need the ACME test server are marked as ignored, so
+      # that a plain `cargo test` works without it. Here they run.
+      - name: Test against the ACME test server
+        run: cargo test --locked --all-features -- --include-ignored

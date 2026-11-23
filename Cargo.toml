@@ -33,6 +33,12 @@ webpki-roots = "1.0"
 x509-parser = "0.18"
 zeroize = "1"
 
+[features]
+# Compiles what only tests need into the library and the binary: the DNS
+# provider that drives the challenge DNS server of the ACME test server, and
+# the harness that starts both servers. Never enabled in a release build.
+test-support = []
+
 [dev-dependencies]
 tokio = { version = "1.54", features = ["test-util"] }
 wiremock = "0.6"

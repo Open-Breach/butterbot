@@ -8,6 +8,8 @@ use async_trait::async_trait;
 use crate::{Error, Result};
 
 pub mod azure;
+#[cfg(any(test, feature = "test-support"))]
+pub mod challtestsrv;
 pub mod cloudflare;
 pub mod propagation;
 
