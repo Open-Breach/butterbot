@@ -174,6 +174,24 @@ impl fmt::Debug for IssuedCert {
     }
 }
 
+/// Opens the store a `store.<name>` instance describes.
+///
+/// Nothing is contacted here; a store that cannot be reached shows when it is
+/// first read.
+pub fn open(
+    instance: &crate::config::StoreInstance,
+    http: &reqwest::Client,
+) -> Result<std::sync::Arc<dyn CertStore>> {
+    use crate::config::StoreKind;
+
+    Ok(match &instance.kind {
+        StoreKind::Directory { path } => std::sync::Arc::new(directory::DirectoryStore::new(path)),
+        StoreKind::AzureKeyVault { vault_url } => {
+            std::sync::Arc::new(key_vault::KeyVaultStore::connect(vault_url, http)?)
+        }
+    })
+}
+
 /// One store of a certificate: the instance name, the store and the format
 /// the certificate is written in.
 pub struct Destination<'a> {
@@ -659,5 +677,46 @@ mod tests {
             assert_eq!(failed[0]["store"], "second");
             assert_eq!(failed[0]["step"], "store");
         }
+    }
+
+    #[tokio::test]
+    async fn store_is_opened_from_its_configuration() {
+        use crate::config::{StoreInstance, StoreKind};
+
+        let http = crate::http::client().expect("an HTTP client");
+        let directory = tempfile::TempDir::new().unwrap();
+        let instance = StoreInstance {
+            kind: StoreKind::Directory {
+                path: directory.path().to_owned(),
+            },
+            format: None,
+        };
+        let store = open(&instance, &http).expect("a directory store");
+        let certificate = issue(&["example.com"]);
+        store
+            .put("example-com", &certificate, Format::Pem)
+            .await
+            .expect("written");
+        assert!(directory.path().join("example-com/fullchain.pem").exists());
+
+        let instance = StoreInstance {
+            kind: StoreKind::AzureKeyVault {
+                vault_url: "https://butterbot-certs.vault.example.com/".into(),
+            },
+            format: None,
+        };
+        assert!(
+            open(&instance, &http).is_ok(),
+            "opening a vault store contacts nothing"
+        );
+
+        let instance = StoreInstance {
+            kind: StoreKind::AzureKeyVault {
+                vault_url: "not a URL".into(),
+            },
+            format: None,
+        };
+        let error = open(&instance, &http).err().expect("the URL is unusable");
+        assert_eq!(error.class(), "permanent");
     }
 }
