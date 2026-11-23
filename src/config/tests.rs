@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::*;
 
+mod files;
 mod model;
 
 /// A configuration that sets every key the model has.

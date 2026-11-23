@@ -15,6 +15,7 @@ tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "time"] }
 toml = "1.2"
 
 [dev-dependencies]
+tempfile = "3.27.0"
 tokio = { version = "1.54", features = ["test-util"] }
 
 [lints.rust]

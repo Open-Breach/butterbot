@@ -3,6 +3,7 @@
 
 mod duration;
 mod error;
+mod files;
 mod layer;
 mod model;
 mod parse;
@@ -10,6 +11,7 @@ mod secret;
 
 pub use duration::{format_duration, parse_duration};
 pub use error::ConfigError;
+pub use files::{DEFAULT_PATH, PATH_VARIABLE, config_paths, read_files};
 pub use layer::Layer;
 pub use model::*;
 pub use secret::Secret;
