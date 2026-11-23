@@ -1,0 +1,107 @@
+//! The two stored formats: PEM text and a PKCS#12 bundle.
+//!
+//! Both hold the same content: the certificate, its chain and the private
+//! key. A PKCS#12 bundle is written with an empty password, which is what the
+//! consumers of the certificates read.
+
+use p12_keystore::{
+    Certificate, KeyStore, KeyStoreEntry, Pkcs12Archive, PrivateKey, PrivateKeyChain,
+};
+use pem::{EncodeConfig, LineEnding, Pem};
+use zeroize::Zeroizing;
+
+use super::{IssuedCert, StoredCert};
+
+/// The password of every PKCS#12 bundle Butterbot writes.
+pub const PKCS12_PASSWORD: &str = "";
+
+const CERTIFICATE: &str = "CERTIFICATE";
+const PRIVATE_KEY: &str = "PRIVATE KEY";
+
+fn encode_pem(tag: &str, der: &[u8]) -> String {
+    pem::encode_config(
+        &Pem::new(tag, der.to_vec()),
+        EncodeConfig::new().set_line_ending(LineEnding::LF),
+    )
+}
+
+/// The certificate followed by its chain, as PEM text.
+pub fn fullchain_pem(certificate: &IssuedCert) -> String {
+    let mut text = encode_pem(CERTIFICATE, &certificate.leaf().der);
+    for intermediate in certificate.chain() {
+        text.push_str(&encode_pem(CERTIFICATE, intermediate));
+    }
+    text
+}
+
+/// The private key as PEM text (PKCS#8, not encrypted).
+pub fn private_key_pem(certificate: &IssuedCert) -> Zeroizing<String> {
+    Zeroizing::new(encode_pem(PRIVATE_KEY, certificate.key_pkcs8_der()))
+}
+
+/// The private key, the certificate and its chain in one PEM text.
+pub fn bundle_pem(certificate: &IssuedCert) -> Zeroizing<String> {
+    let mut text = private_key_pem(certificate);
+    text.push_str(&fullchain_pem(certificate));
+    text
+}
+
+/// The certificate, its chain and the private key as a PKCS#12 bundle with an
+/// empty password. `friendly_name` labels the entry in the bundle.
+pub fn pkcs12(certificate: &IssuedCert, friendly_name: &str) -> Result<Zeroizing<Vec<u8>>, String> {
+    let unusable =
+        |error: p12_keystore::error::Error| format!("the PKCS#12 bundle cannot be built: {error}");
+    let key = PrivateKey::from_der(certificate.key_pkcs8_der()).map_err(unusable)?;
+    let mut certificates = vec![Certificate::from_der(&certificate.leaf().der).map_err(unusable)?];
+    for intermediate in certificate.chain() {
+        certificates.push(Certificate::from_der(intermediate).map_err(unusable)?);
+    }
+    // The key and its certificate are linked by an identifier that only has
+    // to be the same in both places. The serial number serves.
+    let key_id = certificate.leaf().serial.as_bytes();
+    let mut store = KeyStore::new();
+    store.add_entry(
+        friendly_name,
+        KeyStoreEntry::PrivateKeyChain(PrivateKeyChain::new(key_id, key, certificates)),
+    );
+    store
+        .writer(PKCS12_PASSWORD)
+        .write()
+        .map(Zeroizing::new)
+        .map_err(unusable)
+}
+
+/// Reads the certificate out of PEM text: the first certificate in it.
+pub fn certificate_from_pem(text: &str) -> Result<StoredCert, String> {
+    let blocks = pem::parse_many(text).map_err(|error| format!("not PEM: {error}"))?;
+    let first = blocks
+        .into_iter()
+        .find(|block| block.tag() == CERTIFICATE)
+        .ok_or("the PEM text contains no certificate")?;
+    StoredCert::from_der(first.contents())
+}
+
+/// Reads the certificate out of a PKCS#12 bundle with an empty password: the
+/// certificate that belongs to the private key in the bundle.
+pub fn certificate_from_pkcs12(bundle: &[u8]) -> Result<StoredCert, String> {
+    let archive = Pkcs12Archive::from_pkcs12(bundle, PKCS12_PASSWORD)
+        .map_err(|error| format!("not a PKCS#12 bundle with an empty password: {error}"))?;
+    let key_ids: Vec<&[u8]> = archive
+        .keys
+        .iter()
+        .filter_map(|key| key.local_key_id.as_ref().map(AsRef::as_ref))
+        .collect();
+    let of_the_key = archive.certs.iter().find(|bag| {
+        bag.local_key_id
+            .as_deref()
+            .is_some_and(|id| key_ids.contains(&id))
+    });
+    // A bundle without key identifiers lists the certificate first.
+    let bag = of_the_key
+        .or(archive.certs.first())
+        .ok_or("the PKCS#12 bundle contains no certificate")?;
+    StoredCert::from_der(bag.cert.as_der())
+}
+
+#[cfg(test)]
+mod tests;

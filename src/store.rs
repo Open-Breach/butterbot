@@ -15,6 +15,7 @@ pub use crate::config::Format;
 use crate::{Error, Result};
 
 pub mod directory;
+pub mod encode;
 pub mod key_vault;
 
 #[cfg(test)]
