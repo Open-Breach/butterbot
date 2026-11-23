@@ -84,7 +84,7 @@
 
 ## 11. Integration checks
 
-- [ ] 11.1 Run `openspec validate add-certificate-maintainer --strict` and walk through every scenario in the specs, confirming each has a test or a recorded manual check; verify by adding the scenario-to-test mapping to the pull request description
+- [x] 11.1 Run `openspec validate add-certificate-maintainer --strict` and walk through every scenario in the specs, confirming each has a test or a recorded manual check; verify by adding the scenario-to-test mapping to the pull request description
 - [ ] 11.2 Run the end-to-end check against Let's Encrypt staging with a throwaway zone on Azure DNS, a throwaway zone on Cloudflare and a test vault (issuance, second run does nothing, forced renewal, `status`, interruption); verify by recording the commands and results in `docs/deployment.md` under a "verified against" note
 
 ## Workflow follow-up

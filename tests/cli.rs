@@ -271,7 +271,9 @@ fn program_without_a_command_shows_the_help_and_is_a_usage_error() {
 // ---------------------------------------------------------------------------
 
 // command-line, "The run command", scenario "Plain run"; "Exit codes": 0;
-// run-orchestration, "Run once and exit", scenario "Nothing to do".
+// run-orchestration, "Run once and exit", scenario "Nothing to do";
+// certificate-stores, "Adoption of existing certificates", scenario "Certificate from
+// the previous tool": the certificates in the store were not issued by Butterbot.
 #[test]
 fn plain_run_evaluates_every_certificate_and_exits_with_0_when_none_is_due() {
     let setup = Setup::new(&["one", "two", "three"]);
@@ -375,6 +377,73 @@ fn run_with_a_failed_certificate_exits_with_1() {
         failures[0]
     );
     assert_eq!(finished.completed()["outcome"], "failed");
+}
+
+// configuration, "Missing secrets fail only what depends on them", scenario "One
+// provider without credential", with the providers of the program.
+#[test]
+fn missing_dns_credential_fails_its_certificates_and_the_others_are_processed() {
+    let setup = Setup::new(&[]);
+    let mut text = fs::read_to_string(setup.path("butterbot.toml")).expect("the configuration");
+    text.push_str(
+        r#"
+[dns.azure]
+type = "azure-dns"
+subscription_id = "00000000-0000-0000-0000-000000000000"
+resource_group = "dns-zones"
+"#,
+    );
+    for (name, dns) in [
+        ("first-on-cloudflare", "cloudflare"),
+        ("on-azure", "azure"),
+        ("second-on-cloudflare", "cloudflare"),
+    ] {
+        text.push_str(&format!(
+            r#"
+[[certificate]]
+name = "{name}"
+names = ["{name}.example.com"]
+acme = "test"
+dns = "{dns}"
+stores = ["local"]
+"#
+        ));
+        setup.holds(name, 60);
+    }
+    setup.write("butterbot.toml", &text);
+
+    // `dns.cloudflare.access_key` is supplied by no source.
+    let mut command = setup.command_without_secrets(&["run"]);
+    command.env(ACCOUNT_VARIABLE, "account-credentials");
+    let finished = finish(command);
+
+    assert_eq!(finished.code, Some(1), "{}", finished.describe());
+    let failures = finished.events("failure");
+    // Certificates are processed side by side, so the order is not fixed.
+    let mut failed: Vec<&str> = failures
+        .iter()
+        .map(|failure| failure["certificate"].as_str().unwrap_or_default())
+        .collect();
+    failed.sort_unstable();
+    assert_eq!(failed, ["first-on-cloudflare", "second-on-cloudflare"]);
+    for failure in &failures {
+        assert!(
+            failure["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("dns.cloudflare.access_key")),
+            "the message names the missing path: {failure}"
+        );
+    }
+    let completed = finished.completed();
+    assert_eq!(completed["checked"], 3);
+    assert_eq!(completed["failed"], 2);
+    assert!(
+        finished.records().iter().any(|record| {
+            record["certificate"] == "on-azure" && record["message"] == "the certificate is not due"
+        }),
+        "the certificate on Azure DNS is processed:\n{}",
+        finished.stdout
+    );
 }
 
 // command-line, "Exit codes", scenario "Configuration error"; run-events, "No

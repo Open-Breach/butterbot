@@ -68,7 +68,7 @@ fn error_body(code: &str, message: &str) -> String {
 }
 
 // certificate-stores, "Reading the current certificate", scenario "Certificate present",
-// and "Adoption of existing certificates".
+// and "Adoption of existing certificates", scenario "Certificate from the previous tool".
 #[tokio::test]
 async fn present_certificate_is_read_from_its_public_part() {
     let held = issue(&["*.example.com", "example.com"]);
@@ -215,7 +215,10 @@ fn import_request(http: &MockHttp) -> Value {
 }
 
 // certificate-stores, "Store types", scenario "Key Vault store"; "Stored format",
-// scenario "Key Vault default"; "Private key is retrievable from Key Vault".
+// scenario "Key Vault default"; "Private key is retrievable from Key Vault", scenario
+// "Consumer reads the certificate": the import asks for an exportable key and the
+// bundle's content type, which is what makes the vault hand out the bundle as the
+// secret. Reading it back from a real vault is part of the end-to-end check.
 #[tokio::test]
 async fn import_as_pkcs12_sends_bundle_content_type_and_exportable_key() {
     let certificate = issue_with(
