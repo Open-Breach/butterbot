@@ -193,6 +193,35 @@ impl ChallTestSrv {
     pub fn management_url(&self) -> String {
         format!("http://{}", self.management)
     }
+
+    /// How many TXT values the server returns for `record` right now.
+    pub async fn served_txt_values(&self, record: &str) -> usize {
+        use hickory_proto::op::{Message, Query};
+        use hickory_proto::rr::{Name, RData, RecordType};
+        use tokio::net::UdpSocket;
+
+        let mut question = Message::query();
+        let mut name = Name::from_utf8(record).expect("a name");
+        name.set_fqdn(true);
+        question.add_query(Query::query(name, RecordType::TXT));
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("a socket");
+        socket
+            .send_to(&question.to_vec().expect("encoded"), self.dns)
+            .await
+            .expect("sent");
+        let mut buffer = vec![0_u8; 4096];
+        let (length, _) =
+            tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer))
+                .await
+                .expect("the challenge DNS server answers")
+                .expect("received");
+        let answer = Message::from_vec(&buffer[..length]).expect("a DNS message");
+        answer
+            .answers
+            .iter()
+            .filter(|record| matches!(record.data, RData::TXT(_)))
+            .count()
+    }
 }
 
 /// How the ACME test server is set up.

@@ -1,0 +1,5 @@
+# Only what the build reads is sent to the builder.
+*
+!Cargo.toml
+!Cargo.lock
+!src

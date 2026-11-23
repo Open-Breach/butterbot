@@ -125,7 +125,7 @@ impl Deployment {
     /// serves any value at the challenge record.
     async fn challenge_record_is_served(&self) -> bool {
         let dns = self.published_in.as_ref().unwrap_or(&self.acme.dns);
-        served_values(dns, RECORD).await > 0
+        dns.served_txt_values(RECORD).await > 0
     }
 
     /// Checks the check: a value published through the provider is counted.
@@ -146,45 +146,17 @@ impl Deployment {
             .await
             .expect("published");
         assert_eq!(
-            served_values(dns, probe).await,
+            dns.served_txt_values(probe).await,
             1,
             "a published value is seen"
         );
         provider.cleanup(handle).await.expect("removed");
         assert_eq!(
-            served_values(dns, probe).await,
+            dns.served_txt_values(probe).await,
             0,
             "and a removed one is not"
         );
     }
-}
-
-/// How many TXT values the challenge DNS server returns for `record`.
-async fn served_values(dns: &ChallTestSrv, record: &str) -> usize {
-    use hickory_proto::op::{Message, Query};
-    use hickory_proto::rr::{Name, RData, RecordType};
-    use tokio::net::UdpSocket;
-
-    let mut question = Message::query();
-    let mut name = Name::from_utf8(record).expect("a name");
-    name.set_fqdn(true);
-    question.add_query(Query::query(name, RecordType::TXT));
-    let socket = UdpSocket::bind("127.0.0.1:0").await.expect("a socket");
-    socket
-        .send_to(&question.to_vec().expect("encoded"), dns.dns)
-        .await
-        .expect("sent");
-    let mut buffer = vec![0_u8; 4096];
-    let (length, _) = tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer))
-        .await
-        .expect("the challenge DNS server answers")
-        .expect("received");
-    let answer = Message::from_vec(&buffer[..length]).expect("a DNS message");
-    answer
-        .answers
-        .iter()
-        .filter(|record| matches!(record.data, RData::TXT(_)))
-        .count()
 }
 
 fn only_forced() -> Selection {

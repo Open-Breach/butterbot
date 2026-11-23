@@ -27,7 +27,7 @@ It has been tested against an ACME test server. It has not yet run against a pub
 
 This example gets a wildcard certificate from the Let's Encrypt staging server, proves ownership through Cloudflare, and writes the certificate into a directory. Replace `example.com` with a domain whose DNS zone is at Cloudflare. Certificates from the staging server are for testing and are not trusted by browsers.
 
-Build the program with `cargo build --release` and put `target/release/butterbot` on your `PATH`.
+Build the program with `cargo build --release` and put `target/release/butterbot` on your `PATH`. To run it as a container instead, see [Deployment](docs/deployment.md).
 
 **1. Write the configuration.** Save this as `butterbot.toml`:
 
@@ -149,6 +149,7 @@ With Let's Encrypt the suggested window opens when about a third of the lifetime
 - [Configuration](docs/configuration.md): files, environment variables, Key Vault, every setting, a complete example.
 - [Providers](docs/providers.md): each ACME, DNS and store type, with the permissions it needs.
 - [Events](docs/events.md): the events a run writes to the log, and how to monitor that the job runs.
+- [Deployment](docs/deployment.md): the container image, a Kubernetes CronJob, and the steps for replacing an existing certificate job.
 
 ## Development
 
@@ -163,5 +164,13 @@ Some tests need the ACME test server [Pebble](https://github.com/letsencrypt/peb
 ```
 go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.3
 go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.10.3
-cargo test --all-features -- --include-ignored
+cargo test --features test-support -- --include-ignored
+```
+
+The tests of the container image need Docker as well. They start the image, and a second image that can be pointed at the test server:
+
+```
+docker build --tag butterbot:dev .
+docker build --target test --tag butterbot:test .
+BUTTERBOT_IMAGE=butterbot:dev BUTTERBOT_TEST_IMAGE=butterbot:test cargo test --features container-tests --test container
 ```

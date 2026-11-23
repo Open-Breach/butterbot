@@ -44,6 +44,8 @@ zeroize = "1"
 # provider that drives the challenge DNS server of the ACME test server, and
 # the harness that starts both servers. Never enabled in a release build.
 test-support = []
+# Compiles the tests that start the container image; see tests/container.rs.
+container-tests = ["test-support"]
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["test-util"] }
