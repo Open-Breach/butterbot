@@ -50,6 +50,71 @@ pub(super) async fn vault_layer(vault: &dyn SecretVault, log: &Logger) -> Result
     Ok(Layer::new(values))
 }
 
+/// A vault that keeps secrets in memory. It exists for tests: it behaves like
+/// a vault, records what was written, and can be made to fail.
+#[derive(Default)]
+pub struct MemoryVault {
+    state: std::sync::Mutex<MemoryVaultState>,
+}
+
+#[derive(Default)]
+struct MemoryVaultState {
+    secrets: std::collections::BTreeMap<String, String>,
+    set_calls: Vec<String>,
+    set_failure: Option<crate::Error>,
+}
+
+impl MemoryVault {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Makes every call of `set` fail with `failure`.
+    pub fn fail_writes(&self, failure: crate::Error) {
+        self.lock().set_failure = Some(failure);
+    }
+
+    /// The value held under `name`.
+    pub fn value(&self, name: &str) -> Option<Secret> {
+        self.lock().secrets.get(name).map(Secret::new)
+    }
+
+    /// The names `set` was called with, failed calls included.
+    pub fn set_calls(&self) -> Vec<String> {
+        self.lock().set_calls.clone()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, MemoryVaultState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+#[async_trait]
+impl SecretVault for MemoryVault {
+    async fn list_names(&self) -> Result<Vec<String>> {
+        Ok(self.lock().secrets.keys().cloned().collect())
+    }
+
+    async fn get(&self, name: &str) -> Result<Secret> {
+        self.value(name)
+            .ok_or_else(|| crate::Error::permanent(format!("the secret {name} does not exist")))
+    }
+
+    async fn set(&self, name: &str, value: &Secret) -> Result<()> {
+        let mut state = self.lock();
+        state.set_calls.push(name.to_owned());
+        if let Some(failure) = &state.set_failure {
+            return Err(failure.clone());
+        }
+        state
+            .secrets
+            .insert(name.to_owned(), value.expose().to_owned());
+        Ok(())
+    }
+}
+
 /// Azure Key Vault as the secret store behind the Key Vault layer.
 pub struct AzureSecretVault {
     url: String,

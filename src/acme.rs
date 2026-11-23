@@ -21,6 +21,10 @@ use instant_acme::{
 use crate::config::Secret;
 use crate::{Error, Result};
 
+mod accounts;
+
+pub use accounts::Accounts;
+
 /// The ACME error type of a rate limit.
 const RATE_LIMITED: &str = "urn:ietf:params:acme:error:rateLimited";
 
