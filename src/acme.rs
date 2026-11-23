@@ -22,6 +22,7 @@ use crate::config::Secret;
 use crate::{Error, Result};
 
 mod accounts;
+pub mod keys;
 
 pub use accounts::Accounts;
 
