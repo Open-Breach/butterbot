@@ -62,20 +62,30 @@ pub fn free_address() -> SocketAddr {
     listener.local_addr().expect("the address of the listener")
 }
 
-/// Waits until something accepts connections at `address`.
+/// How many times a test server is started again, on other ports, when it
+/// exits before it listens. A port that was free when it was chosen can be
+/// taken a moment later.
+const START_ATTEMPTS: usize = 5;
+
+/// Waits until `process` accepts connections at `address`. Returns `false`
+/// when the process exited instead.
 ///
 /// # Panics
 ///
-/// If nothing does within ten seconds.
-pub fn wait_until_listening(what: &str, address: SocketAddr) {
+/// If the process keeps running but does not listen within ten seconds.
+fn listens(process: &mut Process, what: &str, address: SocketAddr) -> bool {
     let started = Instant::now();
     while TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_err() {
+        if process.has_exited() {
+            return false;
+        }
         assert!(
             started.elapsed() < Duration::from_secs(10),
             "{what} did not start listening at {address}"
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+    true
 }
 
 /// A child process that is killed when the value is dropped.
@@ -97,6 +107,13 @@ impl Process {
             .spawn()
             .unwrap_or_else(|error| panic!("{command:?} cannot be started: {error}"));
         Self { child }
+    }
+}
+
+impl Process {
+    /// Whether the process has ended.
+    pub fn has_exited(&mut self) -> bool {
+        !matches!(self.child.try_wait(), Ok(None))
     }
 }
 
@@ -126,23 +143,28 @@ impl ChallTestSrv {
     ///
     /// If the program is not installed or does not start.
     pub fn start() -> Self {
-        let (management, dns) = (free_address(), free_address());
-        let process = Process::start(
-            Command::new(find_program(CHALLTESTSRV))
-                .args(["-management", &management.to_string()])
-                .args(["-dnsserver", &dns.to_string()])
-                .args(["-http01", "", "-https01", "", "-tlsalpn01", "", "-doh", ""]),
-        );
-        wait_until_listening(
-            "the management interface of pebble-challtestsrv",
-            management,
-        );
-        wait_until_listening("the DNS server of pebble-challtestsrv", dns);
-        Self {
-            management,
-            dns,
-            _process: process,
+        for _ in 0..START_ATTEMPTS {
+            let (management, dns) = (free_address(), free_address());
+            let mut process = Process::start(
+                Command::new(find_program(CHALLTESTSRV))
+                    .args(["-management", &management.to_string()])
+                    .args(["-dnsserver", &dns.to_string()])
+                    .args(["-http01", "", "-https01", "", "-tlsalpn01", "", "-doh", ""]),
+            );
+            if listens(
+                &mut process,
+                "the management interface of pebble-challtestsrv",
+                management,
+            ) && listens(&mut process, "the DNS server of pebble-challtestsrv", dns)
+            {
+                return Self {
+                    management,
+                    dns,
+                    _process: process,
+                };
+            }
         }
+        panic!("pebble-challtestsrv exited at every start; is it the right program?");
     }
 
     /// The URL of the management interface.
@@ -189,6 +211,17 @@ impl Pebble {
     ///
     /// If the program is not installed or does not start.
     pub fn start(dns: SocketAddr, options: &PebbleOptions) -> Self {
+        for _ in 0..START_ATTEMPTS {
+            if let Some(server) = Self::try_start(dns, options) {
+                return server;
+            }
+        }
+        panic!("pebble exited at every start; is it the right program?");
+    }
+
+    /// Starts the server on freshly chosen ports. `None` when it exited
+    /// before it listened, which happens when a port was taken in between.
+    fn try_start(dns: SocketAddr, options: &PebbleOptions) -> Option<Self> {
         let directory = TempDir::new().expect("a temporary directory");
         let (address, management) = (free_address(), free_address());
 
@@ -238,7 +271,7 @@ impl Pebble {
         std::fs::write(&config_path, json!({ "pebble": settings }).to_string())
             .expect("the configuration file");
 
-        let process = Process::start(
+        let mut process = Process::start(
             Command::new(find_program(PEBBLE))
                 .arg("-config")
                 .arg(&config_path)
@@ -249,15 +282,17 @@ impl Pebble {
                 .env("PEBBLE_WFE_NONCEREJECT", "0")
                 .env("PEBBLE_AUTHZREUSE", options.authorization_reuse.to_string()),
         );
-        wait_until_listening("the ACME test server", address);
-        Self {
+        if !listens(&mut process, "the ACME test server", address) {
+            return None;
+        }
+        Some(Self {
             directory_url: format!("https://{address}/dir"),
             root_pem: root_certificate.pem(),
             address,
             management,
             directory,
             _process: process,
-        }
+        })
     }
 
     /// Writes the root certificate to a file and returns its path. The file
@@ -292,6 +327,30 @@ impl AcmeTestServer {
         let dns = ChallTestSrv::start();
         let pebble = Pebble::start(dns.dns, options);
         Self { dns, pebble }
+    }
+
+    /// Clears the TXT values at `record` through `provider`.
+    ///
+    /// # Panics
+    ///
+    /// If the challenge DNS server cannot be reached.
+    pub async fn dns_cleared_for(
+        &self,
+        record: &str,
+        provider: &crate::dns::challtestsrv::ChallTestSrvProvider,
+    ) {
+        use crate::dns::DnsProvider;
+
+        let handle = crate::dns::RecordHandle {
+            zone: crate::dns::Zone::new("example.com", "example.com"),
+            name: record.to_owned(),
+            values: Vec::new(),
+            record_ids: Vec::new(),
+        };
+        provider
+            .cleanup(handle)
+            .await
+            .expect("the record is cleared");
     }
 }
 

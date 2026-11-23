@@ -23,8 +23,10 @@ use crate::{Error, Result};
 
 mod accounts;
 pub mod keys;
+mod order;
 
 pub use accounts::Accounts;
+pub use order::{Challenge, Issuer, OrderRequest, PendingOrder, Polling};
 
 /// The ACME error type of a rate limit.
 const RATE_LIMITED: &str = "urn:ietf:params:acme:error:rateLimited";
@@ -84,6 +86,7 @@ pub struct AcmeClient {
     server: String,
     account: Account,
     retry_after: Arc<Mutex<Option<Duration>>>,
+    polling: Polling,
 }
 
 impl AcmeClient {
@@ -125,6 +128,7 @@ impl AcmeClient {
             server: server.to_owned(),
             account,
             retry_after,
+            polling: Polling::default(),
         })
     }
 
@@ -170,6 +174,7 @@ impl AcmeClient {
                 server: server.to_owned(),
                 account,
                 retry_after,
+                polling: Polling::default(),
             },
             Secret::new(serialised),
         ))
@@ -196,8 +201,14 @@ impl AcmeClient {
         profiles
     }
 
+    /// Changes how the server is polled for results. The default is every
+    /// 5 seconds for at most 2 minutes.
+    pub fn with_polling(mut self, polling: Polling) -> Self {
+        self.polling = polling;
+        self
+    }
+
     /// Maps an error of the ACME client. `action` says what was being done.
-    #[allow(dead_code)]
     fn classify(&self, action: &str, error: &instant_acme::Error) -> Error {
         classify(&self.server, action, error, &self.retry_after)
     }

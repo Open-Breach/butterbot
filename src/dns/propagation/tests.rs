@@ -88,6 +88,11 @@ impl Server {
         Ok(server)
     }
 
+    /// Starts a server on `ip` on a port that is free for UDP and for TCP.
+    async fn start_anywhere(ip: Ipv4Addr) -> Self {
+        start_on_one_port(&[ip]).await.pop().expect("one server")
+    }
+
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().unwrap()
     }
@@ -210,6 +215,8 @@ struct World {
     resolver: Server,
     ns1: Server,
     ns2: Server,
+    /// A nameserver that is not one of `example.com`'s, for delegation.
+    ns3: Server,
     settings: Settings,
 }
 
@@ -238,11 +245,13 @@ async fn start_on_one_port(addresses: &[Ipv4Addr]) -> Vec<Server> {
 
 impl World {
     async fn new(mode: PropagationCheck) -> Self {
-        let resolver = Server::start(Ipv4Addr::LOCALHOST, 0)
-            .await
-            .expect("a resolver");
-        let mut servers = start_on_one_port(&[NS1, NS2]).await;
-        let (ns2, ns1) = (servers.pop().unwrap(), servers.pop().unwrap());
+        let resolver = Server::start_anywhere(Ipv4Addr::LOCALHOST).await;
+        let mut servers = start_on_one_port(&[NS1, NS2, NS3]).await;
+        let (ns3, ns2, ns1) = (
+            servers.pop().unwrap(),
+            servers.pop().unwrap(),
+            servers.pop().unwrap(),
+        );
         resolver.zone(
             "example.com",
             &[("ns1.example.net", NS1), ("ns2.example.net", NS2)],
@@ -260,6 +269,7 @@ impl World {
             resolver,
             ns1,
             ns2,
+            ns3,
             settings,
         }
     }
@@ -452,9 +462,7 @@ async fn check_times_out_and_names_the_nameservers_that_lack_the_values() {
 #[tokio::test]
 async fn delegated_name_is_checked_at_the_nameservers_of_the_zone_it_points_into() {
     let world = World::new(PropagationCheck::Authoritative).await;
-    let ns3 = Server::start(NS3, world.settings.nameserver_port)
-        .await
-        .expect("a third nameserver");
+    let ns3 = &world.ns3;
     world.resolver.cname(RECORD, "example-com.acme.example.net");
     world
         .resolver
@@ -482,9 +490,6 @@ async fn delegated_name_is_checked_at_the_nameservers_of_the_zone_it_points_into
 #[tokio::test]
 async fn delegated_name_that_is_not_served_names_the_delegated_nameserver() {
     let world = World::new(PropagationCheck::Authoritative).await;
-    let _ns3 = Server::start(NS3, world.settings.nameserver_port)
-        .await
-        .expect("a third nameserver");
     world.resolver.cname(RECORD, "example-com.acme.example.net");
     world
         .resolver
@@ -508,9 +513,7 @@ async fn delegated_name_that_is_not_served_names_the_delegated_nameserver() {
 #[tokio::test]
 async fn resolver_mode_asks_the_configured_resolvers_and_no_authoritative_nameserver() {
     let world = World::new(PropagationCheck::Resolver).await;
-    let second = Server::start(Ipv4Addr::LOCALHOST, 0)
-        .await
-        .expect("a second resolver");
+    let second = Server::start_anywhere(Ipv4Addr::LOCALHOST).await;
     world.resolver.txt(RECORD, &["value-one"]);
     second.txt(RECORD, &["value-one", "something-else"]);
     let settings = Settings {
@@ -540,9 +543,7 @@ async fn resolver_mode_asks_the_configured_resolvers_and_no_authoritative_namese
 #[tokio::test]
 async fn resolver_mode_fails_when_one_resolver_lacks_a_value() {
     let world = World::new(PropagationCheck::Resolver).await;
-    let second = Server::start(Ipv4Addr::LOCALHOST, 0)
-        .await
-        .expect("a second resolver");
+    let second = Server::start_anywhere(Ipv4Addr::LOCALHOST).await;
     world.resolver.txt(RECORD, &["value-one"]);
     let settings = Settings {
         resolvers: vec![world.resolver.address, second.address],
