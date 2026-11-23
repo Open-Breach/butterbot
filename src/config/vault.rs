@@ -12,6 +12,7 @@ use super::env::insert;
 use super::names::path_from_vault_name;
 use super::{Layer, Secret};
 use crate::Result;
+use crate::logging::Logger;
 use crate::retry::retry;
 
 /// The operations Butterbot needs from the secret store behind the Key Vault
@@ -29,15 +30,19 @@ pub trait SecretVault: Send + Sync {
 }
 
 /// Reads the Key Vault layer. Transient failures are retried.
-pub(super) async fn vault_layer(vault: &dyn SecretVault) -> Result<Layer> {
-    let mut names = retry(|| vault.list_names()).await?;
+pub(super) async fn vault_layer(vault: &dyn SecretVault, log: &Logger) -> Result<Layer> {
+    let mut names = retry(log, "listing the secrets of the Key Vault", || {
+        vault.list_names()
+    })
+    .await?;
     names.sort();
     let mut values = Map::new();
     for name in names {
         let Some(path) = path_from_vault_name(&name) else {
             continue;
         };
-        let secret = retry(|| vault.get(&name)).await?;
+        let action = format!("reading the Key Vault secret {name}");
+        let secret = retry(log, &action, || vault.get(&name)).await?;
         let origin = format!("Key Vault secret {name}");
         let value = Value::new(Some(&origin), ValueKind::String(secret.expose().to_owned()));
         insert(&mut values, &path, value);

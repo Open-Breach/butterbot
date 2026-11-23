@@ -20,10 +20,10 @@
 
 ## 3. Logging and events
 
-- [ ] 3.1 Set up logging with JSON and text output, automatic selection by terminal detection, `--log-format` and `--log-level`; verify with tests that non-terminal output is one JSON object per line
-- [ ] 3.2 Define the `Event` enum (`run_completed`, `failure`, `renewed`, `expiring`) with the fields from the `run-events` spec and stable serialised names; verify with snapshot tests of each event's JSON
-- [ ] 3.3 Implement the event bus with the always-on log sink and the notifier registry (no notifier types), including per-notifier event selection; verify with a test sink that selection works and that a failing sink is logged and does not propagate
-- [ ] 3.4 Document the events and their fields in `docs/events.md`; verify the documented examples match the snapshot tests
+- [x] 3.1 Set up logging with JSON and text output, automatic selection by terminal detection, `--log-format` and `--log-level`; verify with tests that non-terminal output is one JSON object per line
+- [x] 3.2 Define the `Event` enum (`run_completed`, `failure`, `renewed`, `expiring`) with the fields from the `run-events` spec and stable serialised names; verify with snapshot tests of each event's JSON
+- [x] 3.3 Implement the event bus with the always-on log sink and the notifier registry (no notifier types), including per-notifier event selection; verify with a test sink that selection works and that a failing sink is logged and does not propagate
+- [x] 3.4 Document the events and their fields in `docs/events.md`; verify the documented examples match the snapshot tests
 
 ## 4. Certificate stores
 
