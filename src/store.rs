@@ -12,6 +12,8 @@ use x509_parser::extensions::GeneralName;
 use zeroize::Zeroizing;
 
 pub use crate::config::Format;
+use crate::logging::StepLog;
+use crate::retry::retry;
 use crate::{Error, Result};
 
 pub mod directory;
@@ -169,6 +171,79 @@ impl fmt::Debug for IssuedCert {
             .field("chain", &self.chain.len())
             .field("key", &"[private key]")
             .finish()
+    }
+}
+
+/// One store of a certificate: the instance name, the store and the format
+/// the certificate is written in.
+pub struct Destination<'a> {
+    pub name: &'a str,
+    pub store: &'a dyn CertStore,
+    pub format: Format,
+}
+
+/// Writes an issued certificate to every one of its stores.
+///
+/// A write that fails with a transient error is repeated, up to three attempts
+/// in total. Only the write is repeated: this function has the issued
+/// certificate and nothing else, so no failure here can lead to a new order.
+///
+/// Every store is attempted, also after another one has failed, so that as
+/// many stores as possible hold the new certificate. The certificate counts
+/// as delivered only when the result is `Ok`. The error names each store that
+/// failed.
+pub async fn write_to_stores(
+    log: &StepLog,
+    certificate_name: &str,
+    certificate: &IssuedCert,
+    destinations: &[Destination<'_>],
+) -> Result<()> {
+    let mut failures = Vec::new();
+    for destination in destinations {
+        let action = format!("writing to the store {}", destination.name);
+        let written = retry(log, &action, || {
+            destination
+                .store
+                .put(certificate_name, certificate, destination.format)
+        })
+        .await;
+        match written {
+            Ok(()) => log
+                .record(crate::logging::Level::Info, "certificate written to store")
+                .field("store", destination.name)
+                .field("format", destination.format.as_str())
+                .write(),
+            Err(error) => {
+                log.record(
+                    crate::logging::Level::Error,
+                    "certificate could not be written to store",
+                )
+                .field("store", destination.name)
+                .reason(&error)
+                .write();
+                failures.push((destination.name, error));
+            }
+        }
+    }
+    match failures.as_slice() {
+        [] => Ok(()),
+        [(_, first), ..] => {
+            let reasons: Vec<String> = failures
+                .iter()
+                .map(|(store, error)| format!("store {store}: {error}"))
+                .collect();
+            let message = format!(
+                "the certificate was issued but not written to {} of its {} stores ({})",
+                failures.len(),
+                destinations.len(),
+                reasons.join("; ")
+            );
+            Err(match first {
+                Error::Transient(_) => Error::transient(message),
+                Error::Timeout(_) => Error::timeout(message),
+                _ => Error::permanent(message),
+            })
+        }
     }
 }
 
@@ -408,5 +483,181 @@ mod tests {
             store.current("example-com", Format::Pem).await,
             Err(Error::permanent("forbidden"))
         );
+    }
+
+    mod write_to_stores {
+        use time::macros::datetime;
+
+        use super::*;
+        use crate::logging::{Capture, Level, LogFormat};
+
+        const NAME: &str = "wildcard-example-com";
+
+        fn log() -> (Capture, StepLog) {
+            let capture = Capture::new();
+            let logger = capture.logger(
+                LogFormat::Json,
+                Level::Info,
+                datetime!(2026-11-23 02:00:00 UTC),
+            );
+            (capture, logger.step(NAME, "store"))
+        }
+
+        fn destinations<'a>(stores: &'a [(&'a str, &'a MemoryStore)]) -> Vec<Destination<'a>> {
+            stores
+                .iter()
+                .map(|(name, store)| Destination {
+                    name,
+                    store: *store,
+                    format: Format::Pem,
+                })
+                .collect()
+        }
+
+        // certificate-stores, "Several stores per certificate", scenario "Two stores".
+        #[tokio::test]
+        async fn every_store_receives_the_same_certificate_chain_and_key() {
+            let (first, second) = (MemoryStore::new(), MemoryStore::new());
+            let certificate = issue(&["*.example.com", "example.com"]);
+            let (_, log) = log();
+
+            write_to_stores(
+                &log,
+                NAME,
+                &certificate,
+                &destinations(&[("a", &first), ("b", &second)]),
+            )
+            .await
+            .expect("written to both");
+
+            for store in [&first, &second] {
+                let (held, _) = store.held(NAME).expect("held");
+                assert_eq!(held.leaf(), certificate.leaf());
+                assert_eq!(held.chain(), certificate.chain());
+                assert_eq!(held.key_pkcs8_der(), certificate.key_pkcs8_der());
+            }
+        }
+
+        // certificate-stores, "Store writes are retried", scenario "Transient failure".
+        #[tokio::test(start_paused = true)]
+        async fn transient_failure_repeats_the_write_of_the_same_certificate() {
+            let store = MemoryStore::new();
+            store.fail_next_puts([Error::transient("the vault is busy")]);
+            let certificate = issue(&["example.com"]);
+            let (capture, log) = log();
+
+            write_to_stores(
+                &log,
+                NAME,
+                &certificate,
+                &destinations(&[("vault", &store)]),
+            )
+            .await
+            .expect("the second write succeeds");
+
+            assert_eq!(store.puts(), [NAME, NAME], "the write was made twice");
+            let (held, _) = store.held(NAME).expect("held");
+            assert_eq!(
+                held.leaf().serial,
+                certificate.leaf().serial,
+                "what is stored is the certificate that was issued once, not a newly ordered one"
+            );
+            let records = capture.json();
+            assert_eq!(records[0]["level"], "warn");
+            assert_eq!(records[0]["reason"], "the vault is busy");
+            assert_eq!(records[0]["certificate"], NAME);
+            assert_eq!(records[1]["message"], "certificate written to store");
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn write_is_given_up_after_three_attempts() {
+            let store = MemoryStore::new();
+            store.fail_next_puts([
+                Error::transient("busy 1"),
+                Error::transient("busy 2"),
+                Error::transient("busy 3"),
+            ]);
+            let (_, log) = log();
+
+            let error = write_to_stores(
+                &log,
+                NAME,
+                &issue(&["example.com"]),
+                &destinations(&[("vault", &store)]),
+            )
+            .await
+            .expect_err("three failures");
+
+            assert_eq!(store.puts().len(), 3, "three attempts in total");
+            assert_eq!(
+                error,
+                Error::transient(
+                    "the certificate was issued but not written to 1 of its 1 stores \
+                     (store vault: busy 3)"
+                )
+            );
+        }
+
+        #[tokio::test]
+        async fn permanent_failure_is_not_repeated() {
+            let store = MemoryStore::new();
+            store.fail_next_puts([Error::permanent("forbidden")]);
+            let (_, log) = log();
+
+            let error = write_to_stores(
+                &log,
+                NAME,
+                &issue(&["example.com"]),
+                &destinations(&[("vault", &store)]),
+            )
+            .await
+            .expect_err("refused");
+
+            assert_eq!(store.puts().len(), 1);
+            assert_eq!(error.class(), "permanent");
+        }
+
+        // run-orchestration, "A certificate is complete only when every store has it",
+        // scenario "Second store fails".
+        #[tokio::test]
+        async fn failing_store_fails_the_delivery_and_the_others_keep_the_certificate() {
+            let (first, second, third) =
+                (MemoryStore::new(), MemoryStore::new(), MemoryStore::new());
+            second.fail_next_puts([Error::permanent("forbidden")]);
+            let certificate = issue(&["example.com"]);
+            let (capture, log) = log();
+
+            let error = write_to_stores(
+                &log,
+                NAME,
+                &certificate,
+                &destinations(&[("first", &first), ("second", &second), ("third", &third)]),
+            )
+            .await
+            .expect_err("the second store failed");
+
+            assert_eq!(
+                error.to_string(),
+                "the certificate was issued but not written to 1 of its 3 stores \
+                 (store second: forbidden)"
+            );
+            assert!(
+                first.held(NAME).is_some(),
+                "the store written before keeps the certificate"
+            );
+            assert!(second.held(NAME).is_none());
+            assert!(
+                third.held(NAME).is_some(),
+                "the store after the failing one is still written"
+            );
+            let failed: Vec<_> = capture
+                .json()
+                .into_iter()
+                .filter(|record| record["level"] == "error")
+                .collect();
+            assert_eq!(failed.len(), 1);
+            assert_eq!(failed[0]["store"], "second");
+            assert_eq!(failed[0]["step"], "store");
+        }
     }
 }
