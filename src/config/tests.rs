@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::*;
 
+mod env;
 mod files;
 mod model;
 
@@ -90,4 +91,18 @@ pub(super) fn problems(text: &str) -> Vec<String> {
 
 pub(super) fn days(days: u64) -> Duration {
     Duration::from_secs(days * 86_400)
+}
+
+/// Environment variables as the process would see them.
+pub(super) fn variables(pairs: &[(&str, &str)]) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    pairs
+        .iter()
+        .map(|(name, value)| (name.into(), value.into()))
+        .collect()
+}
+
+/// Builds the configuration from one TOML document and environment variables.
+pub(super) fn from_toml_and_env(text: &str, pairs: &[(&str, &str)]) -> Result<Config, ConfigError> {
+    let file = Layer::from_toml("test.toml", text).expect("the test document is valid TOML");
+    Config::from_layers([file, env_layer(variables(pairs))?])
 }

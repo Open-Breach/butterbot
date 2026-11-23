@@ -14,6 +14,10 @@ pub struct Layer {
 }
 
 impl Layer {
+    pub(super) fn new(values: Map<String, Value>) -> Self {
+        Self { values }
+    }
+
     /// Reads a TOML document. `origin` says where the document comes from and
     /// is attached to every value.
     ///

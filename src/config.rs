@@ -2,18 +2,22 @@
 //! secrets addressed by path, and validation.
 
 mod duration;
+mod env;
 mod error;
 mod files;
 mod layer;
 mod model;
+mod names;
 mod parse;
 mod secret;
 
 pub use duration::{format_duration, parse_duration};
+pub use env::env_layer;
 pub use error::ConfigError;
 pub use files::{DEFAULT_PATH, PATH_VARIABLE, config_paths, read_files};
 pub use layer::Layer;
 pub use model::*;
+pub use names::{ENV_PREFIX, env_name};
 pub use secret::Secret;
 
 impl Config {
