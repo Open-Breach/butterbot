@@ -113,10 +113,15 @@ impl Fixture {
         vault: &Arc<FakeVault>,
     ) -> Result<Loaded, ConfigError> {
         let vault: Arc<dyn SecretVault> = vault.clone();
-        load(std::slice::from_ref(&self.file), variables(pairs), |url| {
-            assert_eq!(url, VAULT_URL, "the configured vault is the one opened");
-            Ok(vault)
-        })
+        load(
+            &quiet(),
+            std::slice::from_ref(&self.file),
+            variables(pairs),
+            |url| {
+                assert_eq!(url, VAULT_URL, "the configured vault is the one opened");
+                Ok(vault)
+            },
+        )
         .await
     }
 }
@@ -134,9 +139,12 @@ fn cloudflare_token(config: &Config) -> Option<String> {
 #[tokio::test]
 async fn without_a_vault_url_no_vault_is_contacted() {
     let fixture = Fixture::new("[dns.cloudflare]\ntype = \"cloudflare\"\n");
-    let loaded = load(std::slice::from_ref(&fixture.file), variables(&[]), |_| {
-        panic!("no vault may be opened when secrets.key_vault_url is not set")
-    })
+    let loaded = load(
+        &quiet(),
+        std::slice::from_ref(&fixture.file),
+        variables(&[]),
+        |_| panic!("no vault may be opened when secrets.key_vault_url is not set"),
+    )
     .await
     .unwrap_or_else(|error| panic!("{error}"));
     assert!(loaded.vault.is_none());
@@ -307,9 +315,12 @@ async fn secret_that_cannot_be_fetched_is_a_configuration_error() {
 #[tokio::test]
 async fn vault_that_cannot_be_opened_is_a_configuration_error() {
     let fixture = Fixture::new(FILE);
-    let error = load(std::slice::from_ref(&fixture.file), variables(&[]), |_| {
-        Err(Error::permanent("no Azure identity is available"))
-    })
+    let error = load(
+        &quiet(),
+        std::slice::from_ref(&fixture.file),
+        variables(&[]),
+        |_| Err(Error::permanent("no Azure identity is available")),
+    )
     .await
     .err()
     .expect("the vault cannot be opened");
@@ -348,6 +359,7 @@ async fn problems_of_files_and_environment_are_reported_before_the_vault_is_open
     let fixture = Fixture::new(FILE);
     let missing = fixture.file.with_file_name("missing.toml");
     let error = load(
+        &quiet(),
         &[fixture.file.clone(), missing],
         variables(&[("BUTTERBOT__RUN", "x")]),
         |_| panic!("the vault is not opened when the lower layers are unusable"),

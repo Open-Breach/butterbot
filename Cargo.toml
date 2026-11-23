@@ -17,7 +17,10 @@ config = { version = "0.15", default-features = false }
 futures-util = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
 thiserror = "2.0"
+time = { version = "0.3", features = ["formatting", "macros", "serde"] }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "time"] }
 toml = "1.2"
 webpki-roots = "1.0"

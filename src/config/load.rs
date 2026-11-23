@@ -9,6 +9,7 @@ use config::{Value, ValueKind};
 use super::layer::merge;
 use super::vault::vault_layer;
 use super::{Config, ConfigError, Layer, SecretVault, env_layer, parse, read_files};
+use crate::logging::Logger;
 
 /// A loaded configuration together with the vault behind its Key Vault layer.
 pub struct Loaded {
@@ -23,8 +24,9 @@ pub struct Loaded {
 /// when `secrets.key_vault_url` is set by those, Key Vault.
 ///
 /// `connect` opens the vault at the given URL. It is not called when the Key
-/// Vault layer is not enabled.
+/// Vault layer is not enabled. Retries of the vault are written to `log`.
 pub async fn load<C>(
+    log: &Logger,
     files: &[PathBuf],
     variables: impl IntoIterator<Item = (OsString, OsString)>,
     connect: C,
@@ -52,7 +54,11 @@ where
             ConfigError::single(format!("Key Vault {url} cannot be read: {error}"))
         };
         let connected = connect(&url).map_err(unreadable)?;
-        layers.push(vault_layer(connected.as_ref()).await.map_err(unreadable)?);
+        layers.push(
+            vault_layer(connected.as_ref(), log)
+                .await
+                .map_err(unreadable)?,
+        );
         vault = Some(connected);
     }
 

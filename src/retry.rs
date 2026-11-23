@@ -9,6 +9,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use crate::Result;
+use crate::logging::{Level, Log};
 
 /// Total number of attempts, the first one included.
 pub const MAX_ATTEMPTS: u32 = 3;
@@ -19,8 +20,9 @@ pub const FIRST_PAUSE: Duration = Duration::from_secs(2);
 /// Runs `op`, repeating it after a transient failure.
 ///
 /// Returns the first success, the first non-transient failure, or the failure
-/// of the last attempt.
-pub async fn retry<T, F, Fut>(mut op: F) -> Result<T>
+/// of the last attempt. Every failure that leads to another attempt is written
+/// to `log` as a warning; `action` says what was being done.
+pub async fn retry<T, F, Fut>(log: &dyn Log, action: &str, mut op: F) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
@@ -30,6 +32,14 @@ where
     loop {
         match op().await {
             Err(error) if error.is_transient() && attempt < MAX_ATTEMPTS => {
+                log.record(
+                    Level::Warn,
+                    format!("{action} failed, trying again in {}s", pause.as_secs()),
+                )
+                .reason(&error)
+                .field("attempt", attempt)
+                .field("attempts", MAX_ATTEMPTS)
+                .write();
                 tokio::time::sleep(pause).await;
                 attempt += 1;
                 pause *= 2;
@@ -44,10 +54,28 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::VecDeque;
 
+    use time::macros::datetime;
     use tokio::time::Instant;
 
     use super::*;
     use crate::Error;
+    use crate::logging::{Capture, LogFormat, Logger};
+
+    /// Runs `retry` on a script with a log nobody reads.
+    async fn run(script: &Script) -> Result<&'static str> {
+        let (_, logger) = captured();
+        retry(&logger, "the operation", || script.call()).await
+    }
+
+    fn captured() -> (Capture, Logger) {
+        let capture = Capture::new();
+        let logger = capture.logger(
+            LogFormat::Json,
+            Level::Info,
+            datetime!(2026-11-23 02:00:00 UTC),
+        );
+        (capture, logger)
+    }
 
     /// An operation that returns the scripted results in order and records
     /// when it was called.
@@ -88,7 +116,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn success_is_returned_without_a_second_attempt() {
         let script = Script::new([Ok("done")]);
-        assert_eq!(retry(|| script.call()).await, Ok("done"));
+        assert_eq!(run(&script).await, Ok("done"));
         assert_eq!(script.call_count(), 1);
     }
 
@@ -96,7 +124,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn transient_failure_is_retried_and_the_second_attempt_succeeds() {
         let script = Script::new([Err(Error::transient("connection reset")), Ok("done")]);
-        assert_eq!(retry(|| script.call()).await, Ok("done"));
+        assert_eq!(run(&script).await, Ok("done"));
         assert_eq!(script.call_count(), 2);
     }
 
@@ -108,10 +136,7 @@ mod tests {
             Err(Error::transient("failure 3")),
             Ok("never reached"),
         ]);
-        assert_eq!(
-            retry(|| script.call()).await,
-            Err(Error::transient("failure 3"))
-        );
+        assert_eq!(run(&script).await, Err(Error::transient("failure 3")));
         assert_eq!(script.call_count(), 3);
     }
 
@@ -127,7 +152,7 @@ mod tests {
         for error in not_retried {
             let script = Script::new([Err(error.clone()), Ok("never reached")]);
             let started = Instant::now();
-            assert_eq!(retry(|| script.call()).await, Err(error));
+            assert_eq!(run(&script).await, Err(error));
             assert_eq!(script.call_count(), 1);
             assert_eq!(
                 started.elapsed(),
@@ -144,10 +169,7 @@ mod tests {
             Err(Error::permanent("forbidden")),
             Ok("never reached"),
         ]);
-        assert_eq!(
-            retry(|| script.call()).await,
-            Err(Error::permanent("forbidden"))
-        );
+        assert_eq!(run(&script).await, Err(Error::permanent("forbidden")));
         assert_eq!(script.call_count(), 2);
     }
 
@@ -158,9 +180,54 @@ mod tests {
             Err(Error::transient("failure 2")),
             Err(Error::transient("failure 3")),
         ]);
-        let _ = retry(|| script.call()).await;
+        let _ = run(&script).await;
         let pauses = script.pauses();
         assert_eq!(pauses, [FIRST_PAUSE, FIRST_PAUSE * 2]);
         assert!(pauses[1] > pauses[0]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_retry_is_logged_with_its_reason() {
+        let (capture, logger) = captured();
+        let script = Script::new([
+            Err(Error::transient("connection reset")),
+            Err(Error::transient("connection refused")),
+            Ok("done"),
+        ]);
+
+        let log = logger.step("wildcard-example-com", "present");
+        assert_eq!(
+            retry(&log, "publishing the records", || script.call()).await,
+            Ok("done")
+        );
+
+        let records = capture.json();
+        assert_eq!(records.len(), 2, "one record per failure that is retried");
+        assert_eq!(records[0]["level"], "warn");
+        assert_eq!(
+            records[0]["message"],
+            "publishing the records failed, trying again in 2s"
+        );
+        assert_eq!(records[0]["reason"], "connection reset");
+        assert_eq!(records[0]["attempt"], 1);
+        assert_eq!(records[0]["certificate"], "wildcard-example-com");
+        assert_eq!(records[0]["step"], "present");
+        assert_eq!(
+            records[1]["message"],
+            "publishing the records failed, trying again in 4s"
+        );
+        assert_eq!(records[1]["reason"], "connection refused");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failure_that_is_not_retried_is_left_to_the_caller_to_log() {
+        let (capture, logger) = captured();
+        let script = Script::new([Err(Error::permanent("forbidden"))]);
+        assert!(
+            retry(&logger, "the operation", || script.call())
+                .await
+                .is_err()
+        );
+        assert!(capture.lines().is_empty());
     }
 }

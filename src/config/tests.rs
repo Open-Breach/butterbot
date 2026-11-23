@@ -111,3 +111,13 @@ pub(super) fn from_toml_and_env(text: &str, pairs: &[(&str, &str)]) -> Result<Co
     let file = Layer::from_toml("test.toml", text).expect("the test document is valid TOML");
     Config::from_layers([file, env_layer(variables(pairs))?])
 }
+
+/// A logger whose output nobody reads.
+pub(super) fn quiet() -> crate::logging::Logger {
+    use crate::logging::{Capture, Level, LogFormat};
+    Capture::new().logger(
+        LogFormat::Json,
+        Level::Debug,
+        time::OffsetDateTime::UNIX_EPOCH,
+    )
+}
