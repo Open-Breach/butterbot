@@ -11,22 +11,28 @@ publish = false
 async-trait = "0.1"
 azure_core = { version = "1.1", default-features = false, features = ["reqwest", "tokio"] }
 azure_identity = { version = "1.0", default-features = false, features = ["tokio"] }
+azure_security_keyvault_certificates = { version = "1.0", default-features = false }
 azure_security_keyvault_secrets = { version = "1.0", default-features = false }
 clap = { version = "4.6", features = ["derive"] }
 config = { version = "0.15", default-features = false }
 futures-util = "0.3"
+p12-keystore = "0.4"
+pem = "4"
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
+tempfile = "3"
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "macros", "serde"] }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "time"] }
 toml = "1.2"
 webpki-roots = "1.0"
+x509-parser = "0.18"
+zeroize = "1"
 
 [dev-dependencies]
-tempfile = "3"
 tokio = { version = "1.54", features = ["test-util"] }
 
 [lints.rust]
