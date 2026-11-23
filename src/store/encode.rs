@@ -103,5 +103,28 @@ pub fn certificate_from_pkcs12(bundle: &[u8]) -> Result<StoredCert, String> {
     StoredCert::from_der(bag.cert.as_der())
 }
 
+/// Whether the private key (PKCS#8 DER) is the key of the certificate.
+pub fn key_belongs_to(certificate: &StoredCert, key_pkcs8_der: &[u8]) -> bool {
+    use rcgen::PublicKeyData;
+
+    let Ok(key) = rcgen::KeyPair::try_from(key_pkcs8_der) else {
+        return false;
+    };
+    let Ok((_, parsed)) = x509_parser::parse_x509_certificate(&certificate.der) else {
+        return false;
+    };
+    parsed.public_key().subject_public_key.data.as_ref() == key.der_bytes()
+}
+
+/// Reads the private key out of PEM text, as PKCS#8 DER.
+pub fn private_key_from_pem(text: &str) -> Result<Zeroizing<Vec<u8>>, String> {
+    let blocks = pem::parse_many(text).map_err(|error| format!("not PEM: {error}"))?;
+    blocks
+        .into_iter()
+        .find(|block| block.tag() == PRIVATE_KEY)
+        .map(|block| Zeroizing::new(block.into_contents()))
+        .ok_or_else(|| "the PEM text contains no private key".to_owned())
+}
+
 #[cfg(test)]
 mod tests;
