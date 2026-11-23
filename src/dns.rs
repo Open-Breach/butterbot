@@ -73,6 +73,46 @@ pub trait DnsProvider: Send + Sync {
     async fn cleanup(&self, handle: RecordHandle) -> Result<()>;
 }
 
+/// Opens the DNS provider a `dns.<name>` instance describes. Nothing is
+/// contacted here.
+///
+/// A provider whose credential is supplied by no configuration layer cannot
+/// be opened; the error names the missing configuration path and where to
+/// supply it.
+pub fn open(
+    name: &str,
+    instance: &crate::config::DnsInstance,
+    http: &reqwest::Client,
+) -> Result<std::sync::Arc<dyn DnsProvider>> {
+    use crate::config::DnsProviderConfig;
+
+    Ok(match &instance.provider {
+        DnsProviderConfig::AzureDns {
+            subscription_id,
+            resource_group,
+        } => std::sync::Arc::new(azure::AzureDnsProvider::connect(
+            http,
+            subscription_id,
+            resource_group,
+        )?),
+        DnsProviderConfig::Cloudflare {
+            access_key: Some(token),
+        } => std::sync::Arc::new(cloudflare::CloudflareProvider::new(
+            http.clone(),
+            token.clone(),
+        )),
+        DnsProviderConfig::Cloudflare { access_key: None } => {
+            let path = format!("dns.{name}.access_key");
+            return Err(Error::permanent(format!(
+                "the secret {path} is not set; supply it as the environment variable {} or as \
+                 the Key Vault secret {}",
+                crate::config::env_name(&path),
+                crate::config::vault_name(&path)
+            )));
+        }
+    })
+}
+
 /// A DNS name in the form used for comparisons: lower case, no trailing dot.
 pub fn normalize(name: &str) -> String {
     name.trim_end_matches('.').to_ascii_lowercase()
@@ -254,5 +294,159 @@ mod tests {
     fn same_value_is_published_once() {
         let records = group_by_record([("example.com", "v"), ("EXAMPLE.com", "v")]);
         assert_eq!(records["_acme-challenge.example.com"], ["v"]);
+    }
+
+    // configuration, "Missing secrets fail only what depends on them": the
+    // message names the missing configuration path.
+    #[test]
+    fn provider_without_its_credential_cannot_be_opened_and_the_path_is_named() {
+        let config = crate::config::Config::from_layers([crate::config::Layer::from_toml(
+            "test.toml",
+            "[dns.cloudflare-eu]\ntype = \"cloudflare\"\n\n[dns.azure]\ntype = \"azure-dns\"\n\
+             subscription_id = \"00000000-0000-0000-0000-000000000000\"\nresource_group = \"dns-zones\"\n",
+        )
+        .unwrap()])
+        .unwrap();
+        let http = crate::http::client().expect("an HTTP client");
+
+        let error = open("cloudflare-eu", &config.dns["cloudflare-eu"], &http)
+            .err()
+            .expect("no token is configured");
+        assert_eq!(error.class(), "permanent");
+        assert_eq!(
+            error.to_string(),
+            "the secret dns.cloudflare-eu.access_key is not set; supply it as the environment \
+             variable BUTTERBOT__DNS__CLOUDFLARE_EU__ACCESS_KEY or as the Key Vault secret \
+             dns--cloudflare-eu--access-key"
+        );
+
+        assert!(
+            open("azure", &config.dns["azure"], &http).is_ok(),
+            "no secret is needed"
+        );
+    }
+
+    #[test]
+    fn provider_with_its_credential_is_opened() {
+        let config = crate::config::Config::from_layers([crate::config::Layer::from_toml(
+            "test.toml",
+            "[dns.cloudflare]\ntype = \"cloudflare\"\naccess_key = \"token\"\n",
+        )
+        .unwrap()])
+        .unwrap();
+        let http = crate::http::client().expect("an HTTP client");
+        assert!(open("cloudflare", &config.dns["cloudflare"], &http).is_ok());
+    }
+
+    /// Task 6.6: `docs/providers.md` lists every provider setting the
+    /// configuration model accepts.
+    mod docs {
+        const DOCUMENT: &str = include_str!("../docs/providers.md");
+        const PARSER: &str = include_str!("config/parse.rs");
+
+        /// Every key and type name the parser reads for ACME servers, DNS
+        /// providers and stores: the text literals in those functions that
+        /// are written like a setting.
+        fn settings_the_model_accepts() -> Vec<&'static str> {
+            let start = PARSER.find("fn parse_acme(").expect("the ACME parser");
+            let end = PARSER
+                .find("fn parse_notify(")
+                .expect("the end of the store parser");
+            let mut settings: Vec<&str> = PARSER[start..end]
+                .split('"')
+                .skip(1)
+                .step_by(2)
+                .filter(|literal| {
+                    !literal.is_empty()
+                        && literal.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || b"_-".contains(&byte)
+                        })
+                })
+                .collect();
+            settings.sort_unstable();
+            settings.dedup();
+            settings
+        }
+
+        #[test]
+        fn every_setting_the_model_accepts_is_in_the_document() {
+            let settings = settings_the_model_accepts();
+            // A check of the check: the list is what is expected to be found.
+            assert_eq!(
+                settings,
+                [
+                    "access_key",
+                    "ari",
+                    "azure-dns",
+                    "azure-key-vault",
+                    "cloudflare",
+                    "directory",
+                    "directory_url",
+                    "eab_key",
+                    "eab_kid",
+                    "format",
+                    "key_type",
+                    "path",
+                    "profile",
+                    "propagation_check",
+                    "propagation_interval",
+                    "propagation_resolvers",
+                    "propagation_timeout",
+                    "renew_before",
+                    "resource_group",
+                    "settle",
+                    "subscription_id",
+                    "ttl",
+                    "type",
+                    "vault_url",
+                ]
+            );
+            for setting in settings {
+                assert!(
+                    DOCUMENT.contains(&format!("`{setting}`")),
+                    "`{setting}` is documented"
+                );
+            }
+        }
+
+        #[test]
+        fn every_setting_has_a_row_in_a_settings_table() {
+            for setting in settings_the_model_accepts() {
+                if setting.contains('-') || ["cloudflare", "directory"].contains(&setting) {
+                    continue; // a provider type, not a setting
+                }
+                assert!(
+                    DOCUMENT
+                        .lines()
+                        .any(|line| line.starts_with(&format!("| `{setting}` |"))),
+                    "`{setting}` has a row"
+                );
+            }
+        }
+
+        #[test]
+        fn documented_values_are_the_ones_the_model_knows() {
+            use crate::config::{Format, KeyType, PropagationCheck};
+
+            for key_type in KeyType::ALL {
+                assert!(DOCUMENT.contains(&format!("`{key_type}`")), "{key_type}");
+            }
+            for format in Format::ALL {
+                assert!(DOCUMENT.contains(&format!("`{format}`")), "{format}");
+            }
+            for check in PropagationCheck::ALL {
+                assert!(DOCUMENT.contains(&format!("`{check}`")), "{check}");
+            }
+            for file in [
+                crate::store::directory::FULLCHAIN_FILE,
+                crate::store::directory::PRIVATE_KEY_FILE,
+                crate::store::directory::BUNDLE_FILE,
+            ] {
+                assert!(DOCUMENT.contains(&format!("`{file}`")), "{file}");
+            }
+            assert!(DOCUMENT.contains(&format!("`{}`", crate::azure::FEDERATED_TOKEN_FILE)));
+        }
     }
 }
