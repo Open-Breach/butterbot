@@ -1,5 +1,5 @@
-//! Tasks 1.1 to 1.3 of `add-webhook-notifier`: the `webhook` notifier type in
-//! the configuration.
+//! Tasks 1.1 to 1.3 and 2.1 of `add-webhook-notifier`: the `webhook` notifier
+//! type in the configuration.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -7,6 +7,11 @@ use std::time::Duration;
 
 use super::*;
 use crate::events::{EventKind, Selection};
+use crate::webhook::template::Template;
+
+fn template(text: &str) -> Template {
+    Template::parse(text).expect("a valid template")
+}
 
 fn webhook(config: &Config, name: &str) -> Webhook {
     let NotifierKind::Webhook(webhook) = &config.notify[name].kind;
@@ -85,33 +90,28 @@ fn full_instance_is_read_into_the_model() {
     );
     let console = webhook(&config, "console");
     assert_eq!(
-        console.url.as_ref().map(Secret::expose),
-        Some("https://console.example.com/alarm/{{event}}")
+        console.url,
+        Some(template("https://console.example.com/alarm/{{event}}"))
     );
     assert_eq!(console.method, WebhookMethod::Post);
     assert_eq!(
         console.body,
         WebhookBody::Custom {
-            template: "{{summary}}\n{{details}}".into(),
+            template: template("{{summary}}\n{{details}}"),
             content_type: "text/plain".into(),
         }
     );
-    let headers: Vec<(&str, &str)> = console
+    let headers: Vec<(String, &Template)> = console
         .headers
         .iter()
-        .map(|(name, value)| (name.as_str(), value.expose()))
+        .map(|(name, value)| (name.to_ascii_lowercase(), value))
         .collect();
-    assert_eq!(headers.len(), 2);
-    assert!(
-        headers
-            .iter()
-            .any(|(name, value)| name.eq_ignore_ascii_case("x-api-key")
-                && *value == "{{access_key}}")
-    );
-    assert!(
-        headers
-            .iter()
-            .any(|(name, value)| name.eq_ignore_ascii_case("x-source") && *value == "butterbot")
+    assert_eq!(
+        headers,
+        [
+            ("x-api-key".to_owned(), &template("{{access_key}}")),
+            ("x-source".to_owned(), &template("butterbot")),
+        ]
     );
     assert_eq!(
         console.access_key.as_ref().map(Secret::expose),
@@ -132,7 +132,7 @@ fn custom_body_is_json_unless_a_content_type_is_given() {
     assert_eq!(
         only_instance("body = '{\"message\": \"{{summary}}\"}'\n").body,
         WebhookBody::Custom {
-            template: r#"{"message": "{{summary}}"}"#.into(),
+            template: template(r#"{"message": "{{summary}}"}"#),
             content_type: "application/json".into(),
         }
     );
@@ -353,8 +353,8 @@ fn url_is_an_expected_secret_with_its_source_names() {
     .expect("valid");
     assert!(supplied.expected_secrets()[0].found);
     assert_eq!(
-        webhook(&supplied, "teams").url.as_ref().map(Secret::expose),
-        Some("https://hooks.example.com/from-the-environment")
+        webhook(&supplied, "teams").url,
+        Some(template("https://hooks.example.com/from-the-environment"))
     );
 }
 
@@ -470,4 +470,113 @@ fn a_configuration_without_a_notifier_expects_no_notifier_secret() {
     let config = from_toml("").expect("valid");
     assert!(config.notify.is_empty());
     assert!(config.expected_secrets().is_empty());
+}
+
+// --- Task 2.1: placeholders are checked when the configuration is loaded -----
+
+const KNOWN: &str =
+    "(the placeholders are: event, summary, details, exit_code, event_json, access_key)";
+
+// webhook-notifier, "Missing and unknown placeholders", scenario "Unknown placeholder".
+#[test]
+fn unknown_placeholder_in_a_body_names_the_notifier_and_the_placeholder() {
+    assert_eq!(
+        instance_problems("body = '{\"text\": \"{{certificat}} failed\"}'\n"),
+        [format!(
+            "notify.hook: `body`: unknown placeholder `{{{{certificat}}}}` {KNOWN} (set in \
+             test.toml)"
+        )]
+    );
+}
+
+#[test]
+fn every_placeholder_is_accepted_in_every_template() {
+    let config = from_toml(
+        r#"
+        [notify.hook]
+        type = "webhook"
+        url = "https://hooks.example.com/{{event}}/{{exit_code}}?key={{access_key}}"
+        body = '{"kind": "{{event}}", "text": "{{summary}}", "more": "{{details}}", "code": "{{exit_code}}", "all": {{event_json}}, "key": "{{access_key}}"}'
+
+        [notify.hook.headers]
+        X-Event = "{{event}} {{summary}} {{exit_code}}"
+        X-API-KEY = "{{access_key}}"
+        "#,
+    );
+    assert!(config.is_ok(), "{config:?}");
+}
+
+// webhook-notifier, "Nothing secret in the output": a problem with the
+// placeholders of a URL or of a header value is reported without any part of
+// the URL or of the value.
+#[test]
+fn unknown_placeholder_in_the_url_or_in_a_header_is_reported_without_the_text() {
+    let found = instance_problems(
+        "url = \"https://hooks.example.com/path-credential/{{exitcode}}\"\n\n\
+         [notify.hook.headers]\nAuthorization = \"Bearer {{acess_key}} header-credential\"\n",
+    );
+    assert_eq!(
+        found,
+        [
+            format!("notify.hook: `url`: contains an unknown placeholder {KNOWN}"),
+            format!(
+                "notify.hook: `headers`: the value of the header {} contains an unknown \
+                 placeholder {KNOWN} (set in test.toml)",
+                webhook_header_name("Authorization")
+            ),
+        ]
+    );
+    for part in [
+        "hooks.example.com",
+        "path-credential",
+        "exitcode",
+        "acess_key",
+        "header-credential",
+    ] {
+        assert!(
+            found.iter().all(|problem| !problem.contains(part)),
+            "{part}"
+        );
+    }
+}
+
+/// The name of a header as the configuration keeps it.
+fn webhook_header_name(written: &str) -> String {
+    let config = from_toml(&format!(
+        "[notify.hook]\ntype = \"webhook\"\n\n[notify.hook.headers]\n{written} = \"v\"\n"
+    ))
+    .expect("valid");
+    webhook(&config, "hook")
+        .headers
+        .keys()
+        .next()
+        .expect("one header")
+        .clone()
+}
+
+#[test]
+fn placeholder_that_is_not_closed_is_rejected() {
+    let found = instance_problems("body = \"{{summary\"\n");
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(
+        found[0].starts_with("notify.hook: `body`: `{{` without a closing `}}`"),
+        "{found:#?}"
+    );
+
+    let found = instance_problems("url = \"https://hooks.example.com/{{event\"\n");
+    assert_eq!(
+        found,
+        [format!(
+            "notify.hook: `url`: contains `{{{{` without a closing `}}}}` {KNOWN}"
+        )]
+    );
+}
+
+#[test]
+fn placeholder_names_are_exact() {
+    for body in ["{{ summary }}", "{{Summary}}", "{{}}", "{{summary }}"] {
+        let found = instance_problems(&format!("body = \"{body}\"\n"));
+        assert_eq!(found.len(), 1, "{body}: {found:#?}");
+        assert!(found[0].contains("unknown placeholder"), "{found:#?}");
+    }
 }

@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use super::Secret;
 use crate::events::Selection;
+use crate::webhook::template::{Placeholder, Template};
 
 /// Built-in defaults, the lowest configuration layer.
 pub mod defaults {
@@ -282,12 +283,12 @@ impl NotifierKind {
 pub struct Webhook {
     /// Where the request goes. A secret: a webhook URL carries its own
     /// credential. `None` when no layer supplies it.
-    pub url: Option<Secret>,
+    pub url: Option<Template>,
     pub method: WebhookMethod,
     pub body: WebhookBody,
-    /// The headers sent with every request, by name. The values are kept as
-    /// secrets, because a key may be written into one.
-    pub headers: BTreeMap<String, Secret>,
+    /// The headers sent with every request, by name. The values are secrets,
+    /// because a key may be written into one.
+    pub headers: BTreeMap<String, Template>,
     /// The value of the `access_key` placeholder.
     pub access_key: Option<Secret>,
     /// A PEM file with certificates to trust for the endpoint, besides the
@@ -298,7 +299,7 @@ pub struct Webhook {
 }
 
 /// What a webhook request with a body carries.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum WebhookBody {
     /// The event as a JSON object.
     Json,
@@ -306,24 +307,32 @@ pub enum WebhookBody {
     Teams,
     /// The configured text, with its placeholders replaced.
     Custom {
-        template: String,
+        template: Template,
         content_type: String,
     },
+}
+
+impl fmt::Debug for WebhookBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Json => f.write_str("Json"),
+            Self::Teams => f.write_str("Teams"),
+            Self::Custom { content_type, .. } => f
+                .debug_struct("Custom")
+                .field("content_type", content_type)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 impl Webhook {
     /// Whether any template of the instance uses the `access_key`
     /// placeholder, which makes the secret required.
     pub fn uses_access_key(&self) -> bool {
-        const PLACEHOLDER: &str = "{{access_key}}";
-        self.url
-            .as_ref()
-            .is_some_and(|url| url.expose().contains(PLACEHOLDER))
-            || self
-                .headers
-                .values()
-                .any(|value| value.expose().contains(PLACEHOLDER))
-            || matches!(&self.body, WebhookBody::Custom { template, .. } if template.contains(PLACEHOLDER))
+        let key = Placeholder::AccessKey;
+        self.url.as_ref().is_some_and(|url| url.uses(key))
+            || self.headers.values().any(|value| value.uses(key))
+            || matches!(&self.body, WebhookBody::Custom { template, .. } if template.uses(key))
     }
 }
 
