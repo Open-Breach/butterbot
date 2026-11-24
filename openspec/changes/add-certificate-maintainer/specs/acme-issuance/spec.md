@@ -95,7 +95,7 @@ When `profile` is set, the system SHALL request that profile from the ACME serve
 - **THEN** the certificate fails with a message naming the profile and the profiles the server offers
 
 ### Requirement: Renewal names its predecessor
-When the ACME server supports ACME Renewal Information and a stored certificate from that server is being replaced, the system SHALL identify the certificate being replaced in the new order.
+When the ACME server supports ACME Renewal Information and a stored certificate from that server is being replaced, the system SHALL identify the certificate being replaced in the new order. If the server refuses an order that names a predecessor, the system SHALL place the order once more without naming one, and SHALL log the refusal with the reason the server gave. If that order is refused as well, the certificate SHALL fail with the reason of the second refusal.
 
 #### Scenario: Renewal on an ARI-capable server
 - **WHEN** a stored certificate is renewed on a server that supports renewal information
@@ -104,6 +104,10 @@ When the ACME server supports ACME Renewal Information and a stored certificate 
 #### Scenario: First issuance
 - **WHEN** no certificate exists yet in any store
 - **THEN** the order names no predecessor
+
+#### Scenario: Predecessor refused
+- **WHEN** the stored certificate was issued to another account, as a certificate of a previous tool was, and the server refuses the order that names it
+- **THEN** the order is placed again without a predecessor and the certificate is issued
 
 ### Requirement: Validation is attempted once per run
 The system SHALL ask the ACME server to validate a certificate's challenges once per run. If validation fails, the certificate SHALL fail for this run and SHALL be attempted again by the next run. The failure message SHALL include the reason the server gave.

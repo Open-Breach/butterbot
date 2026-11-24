@@ -87,6 +87,10 @@
 - [x] 11.1 Run `openspec validate add-certificate-maintainer --strict` and walk through every scenario in the specs, confirming each has a test or a recorded manual check; verify by adding the scenario-to-test mapping to the pull request description
 - [ ] 11.2 Run the end-to-end check against Let's Encrypt staging with a throwaway zone on Azure DNS, a throwaway zone on Cloudflare and a test vault (issuance, second run does nothing, forced renewal, `status`, interruption); verify by recording the commands and results in `docs/deployment.md` under a "verified against" note
 
+## 12. Fixes after the first real use
+
+- [x] 12.1 Place an order again without a predecessor when the server refuses the order that names one (a certificate taken over from the old job was issued to another account); verify with fake providers that the second order names none, that a refusal of both fails the certificate with the second reason, and that a transient failure keeps the predecessor, and against the ACME test server that a second account renews the certificate of the first
+
 ## Workflow follow-up
 
 - Decide the items under "Open Questions" in `design.md`; each becomes its own change if taken up.

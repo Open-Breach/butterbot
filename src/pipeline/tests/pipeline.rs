@@ -436,6 +436,144 @@ async fn renewal_names_the_stored_certificate_the_server_knows() {
     );
 }
 
+/// A harness whose store holds a certificate for `web` that is due and that
+/// the server gives a renewal window for, so that the order names it.
+async fn harness_with_a_predecessor() -> (Harness, String) {
+    let harness = Harness::new(&[entry("web")]);
+    let stored = harness.holds("one", "web", 10).await;
+    let serial = stored.leaf().serial.clone();
+    harness.issuer().windows.lock().unwrap().insert(
+        serial.clone(),
+        RenewalWindow {
+            start: NOW + DAY,
+            end: NOW + DAY * 3,
+        },
+    );
+    (harness, serial)
+}
+
+const ANOTHER_ACCOUNT: &str = "ACME server le: placing the order: unauthorized (HTTP 403): requester \
+                               account did not request the certificate being replaced by this order";
+
+// acme-issuance, "Renewal names its predecessor", scenario "Predecessor refused";
+// certificate-stores, "Adoption of existing certificates": a certificate of a previous
+// tool was issued to another account, and it is renewed all the same.
+#[tokio::test(start_paused = true)]
+async fn order_refused_because_of_its_predecessor_is_placed_again_without_one() {
+    let (harness, serial) = harness_with_a_predecessor().await;
+    harness
+        .issuer()
+        .order_failures
+        .lock()
+        .unwrap()
+        .push_back(Error::permanent(ANOTHER_ACCOUNT));
+
+    let report = harness.run().await;
+
+    assert!(is_renewed(&report, "web"), "{:?}", report.certificates);
+    assert_eq!(
+        *harness.issuer().named.lock().unwrap(),
+        [Some(serial.clone()), None],
+        "the second order names no predecessor"
+    );
+    let warnings = harness.records("web", "warn");
+    assert_eq!(
+        warnings,
+        [(
+            "order".to_owned(),
+            "the ACME server refused the order that names the certificate it replaces; placing \
+             the order again without naming one"
+                .to_owned()
+        )]
+    );
+    let record = harness
+        .log
+        .json()
+        .into_iter()
+        .find(|record| record["level"] == "warn")
+        .expect("the warning");
+    assert_eq!(record["replaces"], serial.as_str());
+    assert_eq!(record["reason"], ANOTHER_ACCOUNT);
+    // The record about the order that was placed names no predecessor either.
+    let placed = harness
+        .log
+        .json()
+        .into_iter()
+        .find(|record| record["message"] == "the order is placed")
+        .expect("an order was placed");
+    assert!(placed["replaces"].is_null(), "{placed:?}");
+    assert_eq!(report.outcome, RunOutcome::Success);
+}
+
+// When the order is refused without the predecessor as well, the certificate fails with
+// the reason of that refusal, and no third order is placed.
+#[tokio::test(start_paused = true)]
+async fn order_refused_with_and_without_its_predecessor_fails_with_the_last_reason() {
+    let (harness, serial) = harness_with_a_predecessor().await;
+    {
+        let mut failures = harness.issuer().order_failures.lock().unwrap();
+        failures.push_back(Error::permanent(ANOTHER_ACCOUNT));
+        failures.push_back(Error::permanent(
+            "the server does not issue for web.example.com",
+        ));
+    }
+
+    let report = harness.run().await;
+
+    assert_eq!(
+        failure_of(&report, "web"),
+        (
+            Step::Order,
+            "the server does not issue for web.example.com".to_owned()
+        )
+    );
+    assert_eq!(
+        *harness.issuer().named.lock().unwrap(),
+        [Some(serial), None],
+        "two orders and no more"
+    );
+}
+
+// Only a refusal makes the pipeline drop the predecessor: an order that could not be
+// placed for a moment is repeated as it was, and one that names none is not repeated.
+#[tokio::test(start_paused = true)]
+async fn predecessor_is_kept_when_the_order_only_fails_for_a_moment() {
+    let (harness, serial) = harness_with_a_predecessor().await;
+    harness
+        .issuer()
+        .order_failures
+        .lock()
+        .unwrap()
+        .push_back(Error::transient("connection reset"));
+
+    let report = harness.run().await;
+
+    assert!(is_renewed(&report, "web"));
+    assert_eq!(
+        *harness.issuer().named.lock().unwrap(),
+        [Some(serial.clone()), Some(serial)],
+        "the repeated order still names the predecessor"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn refused_order_that_names_no_predecessor_is_not_placed_again() {
+    let harness = Harness::new(&[entry("web")]);
+    harness
+        .issuer()
+        .order_failures
+        .lock()
+        .unwrap()
+        .push_back(Error::permanent(
+            "the server does not issue for web.example.com",
+        ));
+
+    let report = harness.run().await;
+
+    assert_eq!(failure_of(&report, "web").0, Step::Order);
+    assert_eq!(*harness.issuer().named.lock().unwrap(), [None]);
+}
+
 // acme-issuance, "Renewal names its predecessor", scenario "First issuance"; and a stored
 // certificate the server does not know is not named.
 #[tokio::test(start_paused = true)]

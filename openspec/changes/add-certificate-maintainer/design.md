@@ -128,6 +128,8 @@ The clock is injected so that every rule in `renewal-policy` is unit-tested with
 
 `renew_before` is the owner's rule and the latest point. With `ari` on (the default), the certificate is also due once the server's suggested window has started. Renewals ordered with `replaces` are coordinated renewals, which Let's Encrypt exempts from its rate limits.
 
+A server may refuse an order because of the certificate it names in `replaces`. Let's Encrypt does when that certificate was issued to another account, which is true of every certificate the old job issued, because it registered a new account on every run. Naming the predecessor is a courtesy to the server, not a condition for issuing, so an order that is refused while it names one is placed once more without it, and the refusal is logged as a warning. Found after the first real use: without this, every certificate taken over from the old job would have failed at its first renewal.
+
 Consequence to be aware of: with Let's Encrypt and `ari` on, a `renew_before` shorter than the CA's suggestion (roughly one third of the lifetime remaining) has no practical effect, because the CA's window opens first. `ari = false` makes `renew_before` the only rule.
 
 A `renew_before` at or above the certificate's lifetime would make the certificate due on every run. It is capped at half the lifetime and logged as an error. *Alternative considered:* refusing to renew such a certificate. Rejected: a typo in configuration must not be able to let a certificate expire.

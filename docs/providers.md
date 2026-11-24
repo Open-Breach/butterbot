@@ -45,6 +45,8 @@ Any server that implements ACME (RFC 8555) can be used. A server is defined by i
 
 **`renew_before` and renewal information.** With `ari = true`, a certificate is renewed at the earlier of two times: when `renew_before` is reached, and when the window the server suggests has started. Let's Encrypt suggests renewal when about one third of the lifetime is left. A shorter `renew_before` then has no practical effect, because the server's window opens first. Set `ari = false` to make `renew_before` the only rule.
 
+**Certificates taken over from another tool.** When Butterbot renews a certificate, it tells the server which certificate the new one replaces. A server refuses that when the old certificate was issued to another account, as Let's Encrypt does. Butterbot then places the order again without naming the old certificate and logs a warning, "the ACME server refused the order that names the certificate it replaces". This happens once for each certificate that another tool issued, at its first renewal, and needs no action.
+
 **Staging servers.** Define a staging server as its own instance, and test with a certificate entry that has its own name and its own store. A certificate from a staging server is not trusted by clients and must not be written to a store that production reads.
 
 ## DNS providers: `[dns.<name>]`
