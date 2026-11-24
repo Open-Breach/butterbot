@@ -151,6 +151,81 @@ fn status_check_config_and_account_new_are_commands() {
     );
 }
 
+// command-line, "The notify test command": the sample is a `failure` by
+// default, and `--event` chooses another kind (scenario "Another event kind").
+#[test]
+fn notify_test_takes_a_name_and_an_event_kind() {
+    use crate::events::EventKind;
+
+    assert_eq!(
+        parse(&["notify", "test", "teams"]).command,
+        Command::Notify {
+            command: NotifyCommand::Test {
+                name: "teams".to_owned(),
+                event: EventKind::Failure
+            }
+        }
+    );
+    for kind in EventKind::ALL {
+        assert_eq!(
+            parse(&["notify", "test", "teams", "--event", kind.as_str()]).command,
+            Command::Notify {
+                command: NotifyCommand::Test {
+                    name: "teams".to_owned(),
+                    event: kind
+                }
+            }
+        );
+    }
+}
+
+// command-line, "The notify test command": exit code 2 for a usage error.
+#[test]
+fn notify_test_with_wrong_arguments_is_a_usage_error() {
+    for arguments in [
+        vec!["notify"],
+        vec!["notify", "test"],
+        vec!["notify", "test", "teams", "extra"],
+        vec!["notify", "test", "teams", "--event"],
+        vec!["notify", "test", "teams", "--event", "renewal"],
+        vec!["notify", "send", "teams"],
+        vec!["notify", "test", "--name", "teams"],
+    ] {
+        assert_eq!(
+            refused(&arguments).exit_code(),
+            2,
+            "butterbot {}",
+            arguments.join(" ")
+        );
+    }
+    let error = refused(&["notify", "test", "teams", "--event", "renewal"]);
+    assert!(
+        error
+            .to_string()
+            .contains("known events: run_completed, failure, renewed, expiring"),
+        "{error}"
+    );
+}
+
+#[test]
+fn notify_test_says_what_happened_without_a_url() {
+    use crate::events::EventKind;
+
+    assert_eq!(
+        notify::delivered_text("teams", EventKind::Failure),
+        "A failure test event was delivered to the notifier teams.\n"
+    );
+    assert_eq!(
+        notify::not_delivered_text(
+            "teams",
+            EventKind::RunCompleted,
+            "the endpoint answered with status 400"
+        ),
+        "A run_completed test event was not delivered to the notifier teams: the endpoint \
+         answered with status 400.\n"
+    );
+}
+
 #[test]
 fn incomplete_or_unknown_commands_are_usage_errors() {
     for arguments in [

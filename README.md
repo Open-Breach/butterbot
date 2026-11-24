@@ -110,6 +110,8 @@ butterbot run --only wildcard-example-com --force
 | `status --json` | The same as one JSON document, with one entry per certificate under `certificates`. |
 | `check-config` | Validates the configuration as `run` does when it starts, and lists every secret the configuration requires with its name in each source. Contacts no ACME server, DNS provider or store. |
 | `account new --acme <name>` | Registers an account at the named ACME server and prints its credentials with the names to store them under. Refuses when the server already has credentials. |
+| `notify test <name>` | Sends one sample `failure` event through the named notifier and says whether it was delivered. The sample is marked as a test: its certificate is called `butterbot-test`. Processes no certificate. |
+| `notify test <name> --event <kind>` | The same with a sample of another kind: `run_completed`, `failure`, `renewed` or `expiring`. |
 
 Options for every command:
 
@@ -129,8 +131,8 @@ Butterbot never asks for input. It behaves the same in a container and in a term
 | Code | Meaning |
 |---|---|
 | 0 | Success. For `run`: every certificate was either not due or renewed. |
-| 1 | At least one certificate failed. Also: `status` could not read a store, or `account new` could not register the account. |
-| 2 | The configuration is invalid or the command line is wrong. Also: `check-config` found a required secret missing, or `account new` was refused because the server already has credentials. No certificate was processed. |
+| 1 | At least one certificate failed. Also: `status` could not read a store, `account new` could not register the account, or `notify test` could not deliver the sample. |
+| 2 | The configuration is invalid or the command line is wrong. Also: `check-config` found a required secret missing, `account new` was refused because the server already has credentials, or `notify test` was given a notifier that is not configured or whose URL is missing. No certificate was processed. |
 | 3 | The run was stopped by a signal (`SIGTERM` or `SIGINT`). Challenge records were removed before the program ended. A second signal ends the program at once. |
 
 ## When a certificate is renewed

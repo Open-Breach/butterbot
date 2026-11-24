@@ -237,6 +237,7 @@ fn help_lists_the_commands_and_options_and_exits_with_0() {
         "status ",
         "check-config ",
         "account ",
+        "notify ",
         "--config <FILE>",
         "--log-format <FORMAT>",
         "--log-level <LEVEL>",
@@ -255,6 +256,20 @@ fn help_lists_the_commands_and_options_and_exits_with_0() {
     let finished = finish(command);
     assert_eq!(finished.code, Some(0));
     for expected in ["--only <NAME>", "--force"] {
+        assert!(finished.stdout.contains(expected), "{}", finished.stdout);
+    }
+
+    let mut command = butterbot();
+    command.args(["notify", "--help"]);
+    let finished = finish(command);
+    assert_eq!(finished.code, Some(0));
+    assert!(finished.stdout.contains("test "), "{}", finished.stdout);
+
+    let mut command = butterbot();
+    command.args(["notify", "test", "--help"]);
+    let finished = finish(command);
+    assert_eq!(finished.code, Some(0));
+    for expected in ["<NAME>", "--event <KIND>", "[default: failure]"] {
         assert!(finished.stdout.contains(expected), "{}", finished.stdout);
     }
 }
@@ -1347,6 +1362,239 @@ fn run_without_a_notifier_is_as_before() {
 }
 
 // ---------------------------------------------------------------------------
+// The notify test command
+// ---------------------------------------------------------------------------
+
+/// A configuration with a certificate that is due and the webhook notifier
+/// `console`, whose URL is the secret path of `server`.
+fn setup_with_notifier(settings: &str) -> Setup {
+    let setup = Setup::new(&["one"]);
+    setup.append(&format!(
+        "\n[notify.console]\ntype = \"webhook\"\n{settings}"
+    ));
+    setup
+}
+
+fn notify_test(setup: &Setup, url: &str, args: &[&str]) -> Finished {
+    let mut arguments = vec!["notify", "test"];
+    arguments.extend(args);
+    let mut command = setup.command(&arguments);
+    command.env(WEBHOOK_URL_VARIABLE, url);
+    finish(command)
+}
+
+/// Asserts that the program showed nothing of the URL.
+fn assert_url_is_not_shown(finished: &Finished, server: &WebhookServer) {
+    for output in [&finished.stdout, &finished.stderr] {
+        for part in [WEBHOOK_PATH, "credential-in-the-path", &server.authority()] {
+            assert!(!output.contains(part), "{part} is in:\n{output}");
+        }
+    }
+}
+
+// command-line, "The notify test command", scenario "Working notifier".
+#[test]
+fn notify_test_delivers_one_failure_that_is_recognisable_as_a_test() {
+    let server = WebhookServer::answering(200);
+    let setup = setup_with_notifier("");
+
+    let finished = notify_test(&setup, &server.url(), &["console"]);
+
+    assert_eq!(finished.code, Some(0), "{}", finished.describe());
+    assert_eq!(
+        finished.stdout,
+        "A failure test event was delivered to the notifier console.\n"
+    );
+    let bodies = server.bodies();
+    assert_eq!(bodies.len(), 1, "one request");
+    assert_eq!(bodies[0]["event"], "failure");
+    assert_eq!(bodies[0]["certificate"], "butterbot-test");
+    assert!(
+        bodies[0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("this is a test event")),
+        "{}",
+        bodies[0]
+    );
+    assert_url_is_not_shown(&finished, &server);
+
+    // No certificate was processed, though one is due, and no event that
+    // looks real was written to the log.
+    assert!(!setup.store().exists(), "the store was not touched");
+    for output in [&finished.stdout, &finished.stderr] {
+        assert!(!output.contains("run started"), "{output}");
+        assert!(!output.contains("\"event\""), "{output}");
+        assert!(!output.contains("butterbot-test"), "{output}");
+    }
+}
+
+// command-line, "The notify test command", scenario "Endpoint rejects the request".
+#[test]
+fn notify_test_reports_the_status_of_a_rejected_request_and_exits_with_1() {
+    let server = WebhookServer::answering(400);
+    let setup = setup_with_notifier("");
+
+    let finished = notify_test(&setup, &server.url(), &["console"]);
+
+    assert_eq!(finished.code, Some(1), "{}", finished.describe());
+    assert_eq!(
+        finished.stdout,
+        "A failure test event was not delivered to the notifier console: the endpoint answered \
+         with status 400.\n"
+    );
+    assert_eq!(server.requests().len(), 1, "no second attempt");
+    assert_url_is_not_shown(&finished, &server);
+}
+
+// command-line, "The notify test command", scenario "Unknown notifier".
+#[test]
+fn notify_test_of_an_unknown_notifier_is_a_usage_error_that_names_it() {
+    let server = WebhookServer::answering(200);
+    let setup = setup_with_notifier("");
+
+    let finished = notify_test(&setup, &server.url(), &["pager"]);
+
+    assert_eq!(finished.code, Some(2), "{}", finished.describe());
+    assert!(
+        finished
+            .stderr
+            .contains("names a notifier that is not configured: pager (configured: console)"),
+        "{}",
+        finished.stderr
+    );
+    assert!(finished.stderr.contains("Usage:"), "{}", finished.stderr);
+    assert!(server.requests().is_empty(), "nothing was sent");
+
+    let without_any = Setup::new(&["one"]);
+    let finished = finish(without_any.command(&["notify", "test", "pager"]));
+    assert_eq!(finished.code, Some(2), "{}", finished.describe());
+    assert!(
+        finished
+            .stderr
+            .contains("not configured: pager (no notifier is configured)"),
+        "{}",
+        finished.stderr
+    );
+}
+
+// command-line, "The notify test command", scenario "Another event kind".
+#[test]
+fn notify_test_sends_the_kind_of_event_that_is_asked_for() {
+    for (kind, certificate_field) in [
+        ("run_completed", "soonest_certificate"),
+        ("renewed", "certificate"),
+        ("expiring", "certificate"),
+        ("failure", "certificate"),
+    ] {
+        let server = WebhookServer::answering(200);
+        let setup = setup_with_notifier("");
+
+        let finished = notify_test(&setup, &server.url(), &["console", "--event", kind]);
+
+        assert_eq!(finished.code, Some(0), "{}", finished.describe());
+        assert_eq!(
+            finished.stdout,
+            format!("A {kind} test event was delivered to the notifier console.\n")
+        );
+        let bodies = server.bodies();
+        assert_eq!(bodies.len(), 1, "{kind}");
+        assert_eq!(bodies[0]["event"], kind);
+        assert_eq!(bodies[0][certificate_field], "butterbot-test", "{kind}");
+    }
+}
+
+// command-line, "The notify test command": 2 for a configuration or usage error.
+#[test]
+fn notify_test_with_a_configuration_or_usage_error_exits_with_2() {
+    let server = WebhookServer::answering(200);
+    let setup = setup_with_notifier("");
+
+    // The URL is supplied by no layer.
+    let finished = finish(setup.command(&["notify", "test", "console"]));
+    assert_eq!(finished.code, Some(2), "{}", finished.describe());
+    assert!(
+        finished.stderr.contains(
+            "notify.console.url is not set; supply it as the environment variable \
+                       BUTTERBOT__NOTIFY__CONSOLE__URL"
+        ),
+        "{}",
+        finished.stderr
+    );
+    assert_eq!(finished.stdout, "");
+
+    // An event kind that does not exist.
+    let finished = notify_test(&setup, &server.url(), &["console", "--event", "renewal"]);
+    assert_eq!(finished.code, Some(2), "{}", finished.describe());
+    assert!(
+        finished.stderr.contains("unknown event"),
+        "{}",
+        finished.stderr
+    );
+
+    // An invalid configuration.
+    setup.append("retries = 5\n");
+    let finished = notify_test(&setup, &server.url(), &["console"]);
+    assert_eq!(finished.code, Some(2), "{}", finished.describe());
+    assert!(
+        finished.stderr.contains("unknown key `retries`"),
+        "{}",
+        finished.stderr
+    );
+
+    assert!(server.requests().is_empty(), "nothing was sent");
+}
+
+// The sample goes through the sink a run builds: the format, the headers and
+// the key of the instance are the ones of a real delivery.
+#[test]
+fn notify_test_uses_the_format_and_the_headers_of_the_instance() {
+    let server = WebhookServer::answering(202);
+    let setup = setup_with_notifier(
+        "format = \"teams\"\nevents = [\"failure\"]\n\n[notify.console.headers]\nX-API-KEY = \
+         \"{{access_key}}\"\n",
+    );
+    let mut command = setup.command(&["notify", "test", "console", "--event", "renewed"]);
+    command
+        .env(WEBHOOK_URL_VARIABLE, server.url())
+        .env(WEBHOOK_KEY_VARIABLE, "console-key");
+
+    let finished = finish(command);
+
+    assert_eq!(finished.code, Some(0), "{}", finished.describe());
+    assert_eq!(
+        finished.stdout,
+        "A renewed test event was delivered to the notifier console.\nNote: the notifier console \
+         does not select renewed events. A run does not send it one.\n"
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]
+            .headers
+            .get("X-API-KEY")
+            .and_then(|value| value.to_str().ok()),
+        Some("console-key")
+    );
+    let body = &server.bodies()[0];
+    assert_eq!(body["type"], "message");
+    let card = &body["attachments"][0]["content"];
+    assert!(
+        card["body"][0]["text"]
+            .as_str()
+            .is_some_and(|heading| heading.starts_with("certificate butterbot-test renewed")),
+        "{card}"
+    );
+    assert!(!finished.stdout.contains("console-key") && !finished.stderr.contains("console-key"));
+    // The URL of the test server uses http, which is warned about.
+    assert!(
+        finished.stderr.contains("its requests are not encrypted"),
+        "{}",
+        finished.stderr
+    );
+    assert_url_is_not_shown(&finished, &server);
+}
+
+// ---------------------------------------------------------------------------
 // The account new command
 // ---------------------------------------------------------------------------
 
@@ -1583,6 +1831,8 @@ fn commands_and_options_of_the_readme_exist() {
             "status --json",
             "check-config",
             "account new --acme <name>",
+            "notify test <name>",
+            "notify test <name> --event <kind>",
             "--config <file>",
             "--log-format json",
             "--log-level error",
@@ -1591,7 +1841,8 @@ fn commands_and_options_of_the_readme_exist() {
         "the commands and options the README describes"
     );
 
-    let setup = Setup::new(&["one"]);
+    let server = WebhookServer::answering(200);
+    let setup = setup_with_notifier("");
     setup.holds("one", 60);
     for (line, expected) in [
         ("run", 0),
@@ -1602,6 +1853,11 @@ fn commands_and_options_of_the_readme_exist() {
         // The server has credentials, so this is refused; it is run for
         // real with the ACME test server.
         ("account new --acme test", 2),
+        ("notify test console", 0),
+        ("notify test console --event run_completed", 0),
+        ("notify test console --event failure", 0),
+        ("notify test console --event renewed", 0),
+        ("notify test console --event expiring", 0),
         ("run --log-format json", 0),
         ("run --log-format text", 0),
         ("run --log-level error", 0),
@@ -1613,7 +1869,9 @@ fn commands_and_options_of_the_readme_exist() {
         ("--version", 0),
     ] {
         let arguments: Vec<&str> = line.split_whitespace().collect();
-        let finished = finish(setup.command(&arguments));
+        let mut command = setup.command(&arguments);
+        command.env(WEBHOOK_URL_VARIABLE, server.url());
+        let finished = finish(command);
         assert_eq!(
             finished.code,
             Some(expected),

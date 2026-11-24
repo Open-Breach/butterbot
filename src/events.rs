@@ -218,6 +218,54 @@ impl Event {
     }
 }
 
+/// The certificate name in every sample event.
+pub const SAMPLE_CERTIFICATE: &str = "butterbot-test";
+
+impl Event {
+    /// An event of the given kind that is recognisable as a test: every
+    /// certificate name in it is [`SAMPLE_CERTIFICATE`], and the reason of a
+    /// failure says that it is a test. It is what `butterbot notify test`
+    /// sends. `now` is its timestamp.
+    pub fn sample(kind: EventKind, now: OffsetDateTime) -> Self {
+        let certificate = SAMPLE_CERTIFICATE.to_owned();
+        let stored_expiry = now + time::Duration::days(12);
+        match kind {
+            EventKind::RunCompleted => Self::RunCompleted(RunCompleted {
+                timestamp: now,
+                outcome: CompletedOutcome::Success,
+                checked: 1,
+                renewed: 0,
+                failed: 0,
+                duration_seconds: 0,
+                soonest_certificate: Some(certificate),
+                soonest_expiry: Some(stored_expiry),
+            }),
+            EventKind::Failure => Self::Failure(Failure {
+                timestamp: now,
+                certificate,
+                step: "validate".to_owned(),
+                reason: "this is a test event sent by `butterbot notify test`; no certificate \
+                         failed"
+                    .to_owned(),
+                stored_expiry: Some(stored_expiry),
+            }),
+            EventKind::Renewed => Self::Renewed(Renewed {
+                timestamp: now,
+                certificate,
+                names: vec![format!("{SAMPLE_CERTIFICATE}.example.com")],
+                expiry: now + time::Duration::days(90),
+                acme: SAMPLE_CERTIFICATE.to_owned(),
+                stores: vec![SAMPLE_CERTIFICATE.to_owned()],
+            }),
+            EventKind::Expiring => Self::Expiring(Expiring {
+                timestamp: now,
+                certificate,
+                expiry: stored_expiry,
+            }),
+        }
+    }
+}
+
 /// Something events are delivered to.
 #[async_trait]
 pub trait EventSink: Send + Sync {
@@ -519,6 +567,33 @@ mod tests {
             assert_eq!(keys.next().map(String::as_str), Some("event"));
             assert_eq!(keys.next().map(String::as_str), Some("timestamp"));
         }
+    }
+
+    // command-line, "The notify test command": the sample is marked as a test.
+    #[test]
+    fn sample_of_every_kind_is_recognisable_as_a_test() {
+        let now = time::macros::datetime!(2026-11-24 10:00:00 UTC);
+        for kind in EventKind::ALL {
+            let sample = Event::sample(kind, now);
+            assert_eq!(sample.kind(), kind);
+            assert_eq!(sample.timestamp(), now);
+            let object = sample.to_json();
+            let certificate = object
+                .get("certificate")
+                .or_else(|| object.get("soonest_certificate"))
+                .expect("every kind names a certificate");
+            assert_eq!(certificate, SAMPLE_CERTIFICATE, "{kind}");
+        }
+        let Event::Failure(failure) = Event::sample(EventKind::Failure, now) else {
+            panic!("a failure");
+        };
+        assert!(failure.reason.contains("this is a test event"));
+        assert!(failure.reason.contains("no certificate failed"));
+        assert!(
+            Event::sample(EventKind::Failure, now)
+                .summary()
+                .contains(SAMPLE_CERTIFICATE)
+        );
     }
 
     #[test]
