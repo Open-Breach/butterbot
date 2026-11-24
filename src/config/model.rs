@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use super::Secret;
+use crate::events::Selection;
 
 /// Built-in defaults, the lowest configuration layer.
 pub mod defaults {
@@ -28,6 +29,9 @@ pub mod defaults {
     pub const PROPAGATION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
     pub const SETTLE: Duration = Duration::from_secs(30);
     pub const DNS_PORT: u16 = 53;
+    pub const WEBHOOK_METHOD: WebhookMethod = WebhookMethod::Post;
+    pub const WEBHOOK_CONTENT_TYPE: &str = "application/json";
+    pub const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// The recursive resolvers asked in `resolver` mode when none are configured.
     pub fn propagation_resolvers() -> Vec<SocketAddr> {
@@ -107,6 +111,22 @@ string_enum! {
     }
 }
 
+string_enum! {
+    /// The HTTP method of a webhook request.
+    WebhookMethod, "method" {
+        Post => "POST",
+        Get => "GET",
+    }
+}
+
+string_enum! {
+    /// A built-in body of a webhook request.
+    WebhookFormat, "format" {
+        Json => "json",
+        Teams => "teams",
+    }
+}
+
 /// The whole configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -118,6 +138,8 @@ pub struct Config {
     pub dns: BTreeMap<String, DnsInstance>,
     /// Certificate stores by instance name (`store.<name>`).
     pub stores: BTreeMap<String, StoreInstance>,
+    /// Notifiers by instance name (`notify.<name>`).
+    pub notify: BTreeMap<String, NotifyInstance>,
     /// Certificate entries (`[[certificate]]`), in the order they are written.
     pub certificates: Vec<Certificate>,
 }
@@ -228,6 +250,80 @@ impl StoreKind {
             Self::AzureKeyVault { .. } => Format::Pfx,
             Self::Directory { .. } => Format::Pem,
         }
+    }
+}
+
+/// A notifier instance (`notify.<name>`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NotifyInstance {
+    /// The event kinds the notifier receives.
+    pub events: Selection,
+    pub kind: NotifierKind,
+}
+
+/// The settings that depend on a notifier's `type`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NotifierKind {
+    Webhook(Webhook),
+}
+
+impl NotifierKind {
+    pub const TYPES: &'static [&'static str] = &["webhook"];
+
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Webhook(_) => "webhook",
+        }
+    }
+}
+
+/// A notifier that sends each event as an HTTP request (`type = "webhook"`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Webhook {
+    /// Where the request goes. A secret: a webhook URL carries its own
+    /// credential. `None` when no layer supplies it.
+    pub url: Option<Secret>,
+    pub method: WebhookMethod,
+    pub body: WebhookBody,
+    /// The headers sent with every request, by name. The values are kept as
+    /// secrets, because a key may be written into one.
+    pub headers: BTreeMap<String, Secret>,
+    /// The value of the `access_key` placeholder.
+    pub access_key: Option<Secret>,
+    /// A PEM file with certificates to trust for the endpoint, besides the
+    /// bundled roots.
+    pub ca_file: Option<PathBuf>,
+    /// The time limit of one attempt.
+    pub timeout: Duration,
+}
+
+/// What a webhook request with a body carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebhookBody {
+    /// The event as a JSON object.
+    Json,
+    /// The message a Microsoft Teams workflow accepts.
+    Teams,
+    /// The configured text, with its placeholders replaced.
+    Custom {
+        template: String,
+        content_type: String,
+    },
+}
+
+impl Webhook {
+    /// Whether any template of the instance uses the `access_key`
+    /// placeholder, which makes the secret required.
+    pub fn uses_access_key(&self) -> bool {
+        const PLACEHOLDER: &str = "{{access_key}}";
+        self.url
+            .as_ref()
+            .is_some_and(|url| url.expose().contains(PLACEHOLDER))
+            || self
+                .headers
+                .values()
+                .any(|value| value.expose().contains(PLACEHOLDER))
+            || matches!(&self.body, WebhookBody::Custom { template, .. } if template.contains(PLACEHOLDER))
     }
 }
 

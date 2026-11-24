@@ -30,8 +30,10 @@ impl ExpectedSecret {
 impl Config {
     /// Every secret the configuration requires: the account credentials of
     /// each ACME server, the binding key of each ACME server that has an
-    /// `eab_kid`, and the API token of each Cloudflare DNS provider. Providers
-    /// that use the ambient Azure identity need none.
+    /// `eab_kid`, the API token of each Cloudflare DNS provider, the URL of
+    /// each webhook notifier, and the access key of each webhook notifier
+    /// that uses the `access_key` placeholder. Providers that use the ambient
+    /// Azure identity need none.
     pub fn expected_secrets(&self) -> Vec<ExpectedSecret> {
         let mut secrets = Vec::new();
         for (name, server) in &self.acme {
@@ -53,6 +55,22 @@ impl Config {
                     access_key.is_some(),
                 )),
                 DnsProviderConfig::AzureDns { .. } | DnsProviderConfig::ChallTestSrv { .. } => {}
+            }
+        }
+        for (name, instance) in &self.notify {
+            match &instance.kind {
+                NotifierKind::Webhook(webhook) => {
+                    secrets.push(ExpectedSecret::new(
+                        format!("notify.{name}.url"),
+                        webhook.url.is_some(),
+                    ));
+                    if webhook.uses_access_key() {
+                        secrets.push(ExpectedSecret::new(
+                            format!("notify.{name}.access_key"),
+                            webhook.access_key.is_some(),
+                        ));
+                    }
+                }
             }
         }
         secrets

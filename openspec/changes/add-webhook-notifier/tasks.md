@@ -2,9 +2,9 @@
 
 ## 1. Configuration
 
-- [ ] 1.1 Add the `webhook` type to `parse_notify` with the settings `url`, `method`, `format`, `body`, `content_type`, `headers`, `access_key`, `ca_file`, `timeout` and the existing `events`, returning a typed notifier instance; verify with parser tests for a minimal instance, a full instance, an unknown key and an unknown type (whose message lists `webhook`)
-- [ ] 1.2 Validate the instance: method is `POST` or `GET`, `format` is `json` or `teams`, `body` and `format` are not both set, header names are valid; verify one test per rule
-- [ ] 1.3 Treat `url` and `access_key` as secrets by path and add them to the expected-secrets listing, the key only when a template uses it; verify that `check-config` lists `notify.<name>.url` with its environment and Key Vault names, and lists the key only when referenced
+- [x] 1.1 Add the `webhook` type to `parse_notify` with the settings `url`, `method`, `format`, `body`, `content_type`, `headers`, `access_key`, `ca_file`, `timeout` and the existing `events`, returning a typed notifier instance; verify with parser tests for a minimal instance, a full instance, an unknown key and an unknown type (whose message lists `webhook`)
+- [x] 1.2 Validate the instance: method is `POST` or `GET`, `format` is `json` or `teams`, `body` and `format` are not both set, header names are valid; verify one test per rule
+- [x] 1.3 Treat `url` and `access_key` as secrets by path and add them to the expected-secrets listing, the key only when a template uses it; verify that `check-config` lists `notify.<name>.url` with its environment and Key Vault names, and lists the key only when referenced
 
 ## 2. Templates
 

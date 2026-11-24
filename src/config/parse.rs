@@ -18,7 +18,7 @@ use config::{Value, ValueKind};
 
 use super::model::*;
 use super::{ConfigError, Secret, parse_duration};
-use crate::events::EventKind;
+use crate::events::{EventKind, Selection};
 
 /// Every top-level key of the configuration.
 const TOP_LEVEL: [&str; 7] = [
@@ -43,14 +43,14 @@ pub(super) fn parse(root: Value) -> Result<Config, ConfigError> {
     let acme = parse_instances("acme", root.remove("acme"), &mut problems, parse_acme);
     let dns = parse_instances("dns", root.remove("dns"), &mut problems, parse_dns);
     let stores = parse_instances("store", root.remove("store"), &mut problems, parse_store);
-    parse_instances("notify", root.remove("notify"), &mut problems, parse_notify);
+    let notify = parse_instances("notify", root.remove("notify"), &mut problems, parse_notify);
     let declared = Declared {
         acme: &acme.declared,
         dns: &dns.declared,
         stores: &stores.declared,
     };
     let certificates = parse_certificates(root.remove("certificate"), &declared, &mut problems);
-    let (acme, dns, stores) = (acme.valid, dns.valid, stores.valid);
+    let (acme, dns, stores, notify) = (acme.valid, dns.valid, stores.valid, notify.valid);
 
     for (key, value) in root {
         problems.push(format!(
@@ -67,6 +67,7 @@ pub(super) fn parse(root: Value) -> Result<Config, ConfigError> {
             acme,
             dns,
             stores,
+            notify,
             certificates,
         })
     } else {
@@ -291,24 +292,95 @@ fn parse_store(reader: &mut Reader<'_>) -> Option<StoreInstance> {
     })
 }
 
-/// This version has no notifier type, so every notifier instance is a problem.
-/// What a notifier has in common, its `type` and its `events` selection, is
-/// still read, so that those keys are checked.
-fn parse_notify(reader: &mut Reader<'_>) -> Option<()> {
+/// What every notifier has, its `type` and its `events` selection, and the
+/// settings of its type.
+fn parse_notify(reader: &mut Reader<'_>) -> Option<NotifyInstance> {
     let type_name = reader.required_string("type");
-    if let Some(events) = reader.strings("events") {
-        for event in events {
-            if let Err(message) = EventKind::from_str(&event) {
-                reader.report("events", "", &message);
+    let events = match reader.strings("events") {
+        // Without a selection a notifier receives every kind.
+        None if !reader.present.contains("events") => Some(Selection::All),
+        None => None,
+        Some(names) => {
+            let mut kinds = BTreeSet::new();
+            let mut valid = true;
+            for name in names {
+                match EventKind::from_str(&name) {
+                    Ok(kind) => {
+                        kinds.insert(kind);
+                    }
+                    Err(message) => {
+                        reader.report("events", "", &message);
+                        valid = false;
+                    }
+                }
             }
+            valid.then_some(Selection::Only(kinds))
         }
-    }
-    if let Some(type_name) = type_name {
-        reader.unknown_type(&type_name, &[]);
-    } else {
+    };
+    let Some(type_name) = type_name else {
         reader.abandon();
+        return None;
+    };
+    let kind = match type_name.as_str() {
+        "webhook" => parse_webhook(reader).map(NotifierKind::Webhook),
+        unknown => {
+            reader.unknown_type(unknown, NotifierKind::TYPES);
+            return None;
+        }
+    };
+    Some(NotifyInstance {
+        events: events?,
+        kind: kind?,
+    })
+}
+
+fn parse_webhook(reader: &mut Reader<'_>) -> Option<Webhook> {
+    let mut valid = true;
+    let url = reader.secret("url");
+    let method = reader.parsed("method");
+    valid &= method.is_some() || !reader.present.contains("method");
+    let format = reader.parsed::<WebhookFormat>("format");
+    valid &= format.is_some() || !reader.present.contains("format");
+    let custom = reader.text("body").map(|(text, _)| text);
+    valid &= custom.is_some() || !reader.present.contains("body");
+    let content_type = reader.string("content_type");
+    valid &= content_type.is_some() || !reader.present.contains("content_type");
+    if custom.is_some() && reader.present.contains("format") {
+        reader.report(
+            "body",
+            "",
+            "cannot be set together with `format`: a notifier has either a custom body or a \
+             built-in format",
+        );
+        valid = false;
     }
-    None
+    let headers = reader.header_table("headers");
+    valid &= headers.is_some() || !reader.present.contains("headers");
+    let access_key = reader.secret("access_key");
+    let ca_file = reader.string("ca_file").map(PathBuf::from);
+    valid &= ca_file.is_some() || !reader.present.contains("ca_file");
+    let timeout = reader.duration_in("timeout", Duration::from_secs(1), Duration::MAX);
+    valid &= timeout.is_some() || !reader.present.contains("timeout");
+    if !valid {
+        return None;
+    }
+    let body = match (custom, format) {
+        (Some(template), _) => WebhookBody::Custom {
+            template,
+            content_type: content_type.unwrap_or_else(|| defaults::WEBHOOK_CONTENT_TYPE.to_owned()),
+        },
+        (None, Some(WebhookFormat::Teams)) => WebhookBody::Teams,
+        (None, Some(WebhookFormat::Json) | None) => WebhookBody::Json,
+    };
+    Some(Webhook {
+        url,
+        method: method.unwrap_or(defaults::WEBHOOK_METHOD),
+        body,
+        headers: headers.unwrap_or_default(),
+        access_key,
+        ca_file,
+        timeout: timeout.unwrap_or(defaults::WEBHOOK_TIMEOUT),
+    })
 }
 
 fn parse_certificates(
@@ -601,6 +673,50 @@ impl<'p> Reader<'p> {
             }
         }
         Some(strings)
+    }
+
+    /// A table of HTTP headers: each key a header name, each value text. No
+    /// message about a header includes its value, which may hold a key.
+    fn header_table(&mut self, key: &str) -> Option<BTreeMap<String, Secret>> {
+        let value = self.table.remove(key)?;
+        let note = origin_note(&value);
+        let ValueKind::Table(table) = value.kind else {
+            self.mismatch(
+                key,
+                "a table of header names and values",
+                &value.kind,
+                &note,
+            );
+            return None;
+        };
+        let table: BTreeMap<String, Value> = table.into_iter().collect();
+        let mut headers = BTreeMap::new();
+        let mut valid = true;
+        for (name, value) in table {
+            let note = origin_note(&value);
+            if http::HeaderName::from_bytes(name.as_bytes()).is_err() {
+                self.report(key, &note, &format!("{name:?} is not a valid header name"));
+                valid = false;
+                continue;
+            }
+            match value.kind {
+                ValueKind::String(text) => {
+                    headers.insert(name, Secret::new(text));
+                }
+                other => {
+                    self.report(
+                        key,
+                        &note,
+                        &format!(
+                            "the value of the header {name} has to be a string, found {}",
+                            kind_name(&other)
+                        ),
+                    );
+                    valid = false;
+                }
+            }
+        }
+        valid.then_some(headers)
     }
 
     /// A list of resolver addresses, each an IP address with an optional port.
