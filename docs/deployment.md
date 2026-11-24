@@ -206,7 +206,7 @@ Why these settings:
 kubectl --namespace butterbot create job --from=cronjob/butterbot butterbot-manual
 ```
 
-**Monitoring.** A run ends with exit code 0, 1, 2 or 3, which the Job shows as succeeded or failed. To notice that the job does not run at all, alert on the absence of the `run_completed` event in the log; see [Events](events.md).
+**Monitoring.** A run ends with exit code 0, 1, 2 or 3, which the Job shows as succeeded or failed. To notice that the job does not run at all, alert on the absence of the `run_completed` event in the log; see [Events](events.md). To be told when a certificate fails, configure a notifier; see [Notifications](notifications.md).
 
 ## Replacing an existing job
 

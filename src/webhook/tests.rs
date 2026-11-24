@@ -1320,3 +1320,288 @@ async fn configuration_without_a_notifier_registers_nothing() {
     assert_eq!(records.len(), 1, "the event in the log and nothing else");
     assert_eq!(records[0]["event"], "run_completed");
 }
+
+/// Task 6.2 of `add-webhook-notifier`: `docs/notifications.md` agrees with the
+/// program.
+mod docs {
+    use super::*;
+    use crate::config::WebhookBody;
+    use crate::events::Selection;
+
+    const DOCUMENT: &str = include_str!("../../docs/notifications.md");
+
+    /// The content of the fenced blocks with the given language, in order.
+    fn blocks(language: &str) -> Vec<&'static str> {
+        let opening = format!("```{language}\n");
+        DOCUMENT
+            .split(opening.as_str())
+            .skip(1)
+            .map(|rest| rest.split("\n```").next().expect("the block is closed"))
+            .collect()
+    }
+
+    /// The configuration of each example, with the name of its instance.
+    fn examples() -> Vec<(String, Config)> {
+        blocks("toml")
+            .into_iter()
+            .map(|text| {
+                let file = Layer::from_toml("notifications.md", text)
+                    .unwrap_or_else(|error| panic!("{error}:\n{text}"));
+                let config =
+                    Config::from_layers([file]).unwrap_or_else(|error| panic!("{error}:\n{text}"));
+                assert_eq!(config.notify.len(), 1, "one instance per example:\n{text}");
+                let name = config.notify.keys().next().expect("an instance").clone();
+                (name, config)
+            })
+            .collect()
+    }
+
+    fn example(name: &str) -> Config {
+        examples()
+            .into_iter()
+            .find(|(instance, _)| instance == name)
+            .unwrap_or_else(|| panic!("the document has an example called {name}"))
+            .1
+    }
+
+    #[test]
+    fn every_configuration_example_loads_without_errors() {
+        let names: Vec<String> = examples().into_iter().map(|(name, _)| name).collect();
+        assert_eq!(names, ["teams", "monitor", "console", "archive"]);
+    }
+
+    #[test]
+    fn every_example_keeps_its_secrets_out_of_the_file_and_names_them() {
+        for (name, config) in examples() {
+            let secrets = config.expected_secrets();
+            assert!(!secrets.is_empty(), "{name} has a URL");
+            for secret in secrets {
+                assert!(!secret.found, "{} is not in the example", secret.path);
+                if name != "archive" {
+                    assert!(DOCUMENT.contains(&secret.path), "{}", secret.path);
+                }
+                if name == "teams" || name == "console" {
+                    assert!(DOCUMENT.contains(&secret.env_name), "{}", secret.env_name);
+                    assert!(
+                        DOCUMENT.contains(&secret.vault_name),
+                        "{}",
+                        secret.vault_name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn teams_example_uses_the_teams_format_and_selects_failures() {
+        let config = example("teams");
+        assert_eq!(webhook(&config, "teams").body, WebhookBody::Teams);
+        assert_eq!(
+            config.notify["teams"].events,
+            Selection::only([EventKind::Failure, EventKind::Expiring])
+        );
+        // The heading the walk-through says the test card has.
+        let sample = Event::sample(EventKind::Failure, datetime!(2026-11-24 10:00:00 UTC));
+        assert_eq!(
+            teams::message(&sample)["attachments"][0]["content"]["body"][0]["text"],
+            "certificate butterbot-test failed at step validate"
+        );
+        assert!(DOCUMENT.contains("\"certificate butterbot-test failed at step validate\""));
+    }
+
+    #[tokio::test]
+    async fn monitor_example_calls_the_url_that_ends_in_the_exit_code() {
+        let config = example("monitor");
+        assert_eq!(webhook(&config, "monitor").method, WebhookMethod::Get);
+        assert_eq!(
+            config.notify["monitor"].events,
+            Selection::only([EventKind::RunCompleted])
+        );
+
+        // The URL of the document, pointed at a local server.
+        let documented = blocks("text")
+            .into_iter()
+            .find(|block| block.contains("{{exit_code}}"))
+            .expect("the document shows the URL");
+        assert_eq!(
+            documented,
+            "https://monitor.example.com/ping/YOUR-CHECK-ID/{{exit_code}}"
+        );
+        let server = server_answering(200).await;
+        let url = documented.replace("https://monitor.example.com", &server.uri());
+        let mut settings = webhook(&config, "monitor");
+        settings.url = Some(Template::parse(&url).expect("a template"));
+        let (_, logger) = capture();
+        let sink = WebhookSink::open("monitor", &settings, &logger).expect("usable");
+
+        for event in [
+            examples::run_completed(),
+            Event::sample(EventKind::RunCompleted, datetime!(2026-11-24 10:00:00 UTC)),
+        ] {
+            sink.deliver(&event).await.expect("delivered");
+        }
+
+        let requests = requests(&server).await;
+        assert_eq!(requests[0].method.as_str(), "GET");
+        assert_eq!(requests[0].url.path(), "/ping/YOUR-CHECK-ID/1");
+        assert_eq!(
+            requests[1].url.path(),
+            "/ping/YOUR-CHECK-ID/0",
+            "the sample of `notify test` is a successful run"
+        );
+    }
+
+    #[tokio::test]
+    async fn console_example_sends_its_body_and_the_key_in_the_header() {
+        let server = server_answering(200).await;
+        let mut settings = webhook(&example("console"), "console");
+        assert!(settings.uses_access_key());
+        assert!(settings.ca_file.is_some());
+        settings.url = Some(Template::parse(&secret_url(&server)).expect("a template"));
+        settings.access_key = Some(Secret::new(KEY));
+        // The file of the example does not exist here, and the local server
+        // needs none.
+        settings.ca_file = None;
+        let (_, logger) = capture();
+        let sink = WebhookSink::open("console", &settings, &logger).expect("usable");
+
+        sink.deliver(&awkward_failure()).await.expect("delivered");
+
+        let requests = requests(&server).await;
+        assert_eq!(header(&requests[0], "X-API-KEY"), Some(KEY));
+        let body = body_json(&requests[0]);
+        assert_eq!(
+            body["title"],
+            "certificate wildcard-example-com failed at step validate"
+        );
+        assert!(
+            body["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(AWKWARD_REASON))
+        );
+    }
+
+    #[test]
+    fn body_with_the_whole_event_is_a_valid_template() {
+        let documented = r#"'{"source": "butterbot", "event": {{event_json}}}'"#;
+        assert!(DOCUMENT.contains(documented));
+        let config = hook_config(
+            "https://hooks.example.com/a",
+            &format!("body = {documented}\n"),
+        );
+        let WebhookBody::Custom { template, .. } = webhook(&config, "hook").body else {
+            panic!("a custom body");
+        };
+        let rendered = template.render(Position::JsonBody, &Values::of(&examples::failure(), ""));
+        let parsed: Value = serde_json::from_str(&rendered).expect("valid JSON");
+        assert_eq!(
+            parsed["event"],
+            Value::Object(examples::failure().to_json())
+        );
+    }
+
+    #[test]
+    fn json_example_is_the_default_body_of_a_failure() {
+        let documented = blocks("json");
+        assert_eq!(documented.len(), 1);
+        let shown: Map<String, Value> = serde_json::from_str(documented[0]).expect("valid JSON");
+        let actual = examples::failure().to_json();
+        assert_eq!(shown, actual);
+        assert_eq!(
+            shown.keys().collect::<Vec<_>>(),
+            actual.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            webhook(&example("archive"), "archive").body,
+            WebhookBody::Json
+        );
+    }
+
+    /// The lines of the `text` blocks that are log records.
+    fn documented_records() -> Vec<&'static str> {
+        blocks("text")
+            .into_iter()
+            .flat_map(str::lines)
+            .filter(|line| line.starts_with('{'))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn log_record_of_a_failed_delivery_is_what_the_program_writes() {
+        let server = server_answering(404).await;
+        let config = config(&format!(
+            "[notify.teams]\ntype = \"webhook\"\nurl = \"{}\"\n",
+            secret_url(&server)
+        ));
+        let (capture, logger) = capture();
+
+        bus_with(&config, &logger).emit(examples::failure()).await;
+
+        let written = capture.lines();
+        assert_eq!(written.len(), 2, "the event and the failed delivery");
+        assert_eq!(documented_records()[0], written[1]);
+    }
+
+    #[test]
+    fn log_record_of_a_misconfigured_notifier_is_what_the_program_writes() {
+        let config = config("[notify.teams]\ntype = \"webhook\"\n");
+        let capture = Capture::new();
+        let logger = capture.logger(
+            LogFormat::Json,
+            Level::Info,
+            datetime!(2026-11-23 02:00:00 UTC),
+        );
+        let mut bus = EventBus::new(logger.clone());
+
+        register(&config, &mut bus, &logger);
+
+        assert_eq!(capture.lines(), [documented_records()[1]]);
+    }
+
+    #[test]
+    fn documented_reasons_are_the_ones_the_sink_gives() {
+        for reason in [
+            "the endpoint answered with status 4xx",
+            "the endpoint answered with status 3xx; redirects are not followed",
+            "the endpoint answered with status 5xx",
+            "the connection failed",
+            "the connection failed: the certificate of the endpoint was not accepted",
+            "the endpoint did not answer within 10s",
+        ] {
+            assert!(DOCUMENT.contains(&format!("| `{reason}`")), "{reason}");
+        }
+        assert_eq!(
+            answered(reqwest::StatusCode::NOT_FOUND),
+            "the endpoint answered with status 404"
+        );
+        assert_eq!(
+            crate::config::format_duration(defaults::WEBHOOK_TIMEOUT),
+            "10s"
+        );
+    }
+
+    #[test]
+    fn documented_secret_names_follow_the_rules() {
+        for (path, environment, vault) in [
+            (
+                "notify.teams.url",
+                "BUTTERBOT__NOTIFY__TEAMS__URL",
+                "notify--teams--url",
+            ),
+            (
+                "notify.console.url",
+                "BUTTERBOT__NOTIFY__CONSOLE__URL",
+                "notify--console--url",
+            ),
+            (
+                "notify.console.access_key",
+                "BUTTERBOT__NOTIFY__CONSOLE__ACCESS_KEY",
+                "notify--console--access-key",
+            ),
+        ] {
+            assert_eq!(env_name(path), environment);
+            assert_eq!(vault_name(path), vault);
+            assert!(DOCUMENT.contains(environment) && DOCUMENT.contains(vault));
+        }
+    }
+}

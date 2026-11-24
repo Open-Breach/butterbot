@@ -226,6 +226,44 @@ fn notify_test_says_what_happened_without_a_url() {
     );
 }
 
+// Task 6.2 of `add-webhook-notifier`: what `docs/notifications.md` says the
+// command prints, and the commands it shows.
+#[test]
+fn notifications_document_shows_what_notify_test_prints() {
+    use crate::events::EventKind;
+
+    const DOCUMENT: &str = include_str!("../../docs/notifications.md");
+    for printed in [
+        notify::delivered_text("teams", EventKind::Failure),
+        notify::not_delivered_text(
+            "teams",
+            EventKind::Failure,
+            "the endpoint answered with status 400",
+        ),
+    ] {
+        assert!(DOCUMENT.contains(&printed), "{printed}");
+    }
+
+    let commands: Vec<&str> = DOCUMENT
+        .lines()
+        .filter_map(|line| line.strip_prefix("butterbot "))
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            "check-config",
+            "notify test teams",
+            "notify test teams --event expiring",
+            "notify test teams --event renewed",
+            "notify test teams --event run_completed",
+        ]
+    );
+    for command in commands {
+        let arguments: Vec<&str> = command.split_whitespace().collect();
+        parse(&arguments);
+    }
+}
+
 #[test]
 fn incomplete_or_unknown_commands_are_usage_errors() {
     for arguments in [

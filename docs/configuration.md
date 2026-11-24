@@ -42,7 +42,8 @@ Read in the other direction: in the tables `acme`, `dns`, `store` and `notify` t
 Limits of the environment:
 
 - Certificate entries cannot be set from the environment. They are a list and have no path.
-- Settings that are lists (`propagation_resolvers`) cannot be set from the environment.
+- Settings that are lists (`propagation_resolvers`, and the `events` of a notifier) cannot be set from the environment.
+- The `headers` of a notifier are set in a file. A header name with a dash cannot be written as the name of an environment variable.
 - A variable that starts with `BUTTERBOT__` but names no configuration key is an error. This catches typing mistakes.
 
 ### Azure Key Vault
@@ -71,6 +72,9 @@ A secret is an ordinary configuration key. It is identified by its path, so it c
 
 - `acme.<name>.access_key` holds the account credentials for an ACME server.
 - `dns.<name>.access_key` holds the API token of a Cloudflare DNS provider.
+- `notify.<name>.access_key` holds the key a webhook notifier sends to its endpoint, when it sends one.
+
+A webhook notifier has a second secret: `notify.<name>.url`, the URL its requests go to. A webhook URL carries its own credential, so Butterbot treats the whole URL as a secret.
 
 Two instances of the same provider type have two different secrets, for example `dns.cloudflare.access_key` and `dns.cloudflare-eu.access_key`.
 
@@ -80,7 +84,7 @@ Further rules:
 
 - Keep secrets out of the configuration file. Supply them through the environment or the vault.
 - A secret with an empty value counts as not supplied.
-- A missing secret does not stop a run. The certificates that need it fail with a message that names the missing path, and all other certificates are processed.
+- A missing secret does not stop a run. The certificates that need it fail with a message that names the missing path, and all other certificates are processed. A notifier whose secret is missing is reported once and receives no events.
 - Secret values are never written to the log, to error messages or to the output of any command.
 
 ## Value formats
@@ -174,7 +178,66 @@ Settings for `type = "directory"`:
 
 ### `[notify.<name>]`: notifiers
 
-This version has no notifier type. Events are written to the log only. A `[notify.<name>]` table is rejected, because its `type` cannot be one that exists.
+A notifier receives the events of a run; [Events](events.md) describes them. There is one notifier type, `webhook`, which sends each event as one HTTP request. [Notifications](notifications.md) has complete examples, Microsoft Teams among them.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `type` | required | `webhook`. |
+| `events` | every kind | The kinds of event the notifier receives, as a list: any of `run_completed`, `failure`, `renewed` and `expiring`. |
+
+Settings for `type = "webhook"`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `url` | secret | Where the request goes. It starts with `https://` or `http://` and may contain placeholders. With `http://` the request is not encrypted, and Butterbot logs a warning. |
+| `method` | `"POST"` | `POST` or `GET`. A `GET` request has no body. |
+| `format` | `"json"` | The built-in body: `json` is the event as a JSON object, `teams` is a message for a Microsoft Teams workflow. Cannot be set together with `body`. |
+| `body` | none | A body of your own, as text with placeholders. Cannot be set together with `format`. |
+| `content_type` | `"application/json"` | The content type of `body`. It has no effect without `body`. |
+| `headers` | none | A table of headers that are sent with every request. A value may contain placeholders. |
+| `access_key` | secret | The value of the placeholder `{{access_key}}`. Required when the URL, a header or the body uses the placeholder, and not otherwise. |
+| `ca_file` | none | A PEM file with certificates to trust for the endpoint, in addition to the public certificate authorities. For an endpoint with a certificate from a private authority. |
+| `timeout` | `"10s"` | The time limit of one attempt. At least `"1s"`. |
+
+The secrets of a webhook, for an instance called `teams`:
+
+| Secret | Environment variable | Key Vault secret |
+|---|---|---|
+| `notify.teams.url` | `BUTTERBOT__NOTIFY__TEAMS__URL` | `notify--teams--url` |
+| `notify.teams.access_key` | `BUTTERBOT__NOTIFY__TEAMS__ACCESS_KEY` | `notify--teams--access-key` |
+
+The URL, the header values and `body` are templates. A placeholder is written as `{{name}}`, exactly so, without spaces. A name that is not in this list is a configuration error.
+
+| Placeholder | Value |
+|---|---|
+| `{{event}}` | The kind of the event, for example `failure`. |
+| `{{summary}}` | The event in one sentence, for example "certificate api-example-org failed at step validate". |
+| `{{details}}` | The fields of the event except its kind, one per line as `name: value`. A list is written as its items separated by commas, a field without a value as `none`. |
+| `{{exit_code}}` | For `run_completed`: `0` when no certificate failed, `1` when one did. Empty for every other event. |
+| `{{event_json}}` | The event as a JSON object, as [Events](events.md) shows it. |
+| `{{access_key}}` | The secret `notify.<name>.access_key`. |
+
+A value is inserted so that it cannot break what surrounds it:
+
+| Where | How a value is inserted |
+|---|---|
+| `url` | Percent-encoded. Only letters, digits and `-`, `.`, `_`, `~` are left as they are. |
+| A header value | As it is. A value with a line break makes the delivery fail, so `{{details}}` does not belong in a header. |
+| `body` with a JSON content type | Escaped as the content of a JSON string. Write the quotation marks yourself: `"text": "{{summary}}"`. |
+| `body` with another content type | As it is. |
+
+`{{event_json}}` is the exception: in a body it is inserted as a JSON object, without quotation marks around it: `"event": {{event_json}}`.
+
+How a delivery behaves:
+
+- A 2xx answer is a success.
+- After a network error, a 5xx answer or status 429, Butterbot tries again: three attempts in all, each limited by `timeout`. A delivery is given up after 30 seconds whatever its state.
+- Every other answer fails at once. Redirects are not followed, because a redirect would send the headers to a host the configuration does not name.
+- A delivery that fails is written to the log with the name of the notifier, the kind of the event, and the status or the kind of error. It never changes the outcome or the exit code of a run.
+- The URL, the key and the header values are never written to the log, to error messages or to the output of a command.
+- Certificate verification cannot be switched off. Use `ca_file` for an endpoint with a private certificate authority.
+
+A notifier whose `url` is supplied by no source is reported once at the start of a run and receives no events. So is one that uses `{{access_key}}` without the key being supplied, and one whose URL has another scheme than `https` or `http`. `butterbot check-config` lists a missing URL or key as a missing secret, and `butterbot notify test <name>` sends a sample event through one notifier.
 
 ### `[[certificate]]`: certificate entries
 
@@ -216,6 +279,7 @@ The whole configuration is validated before any certificate is processed. These 
 - a missing required key;
 - an invalid instance or certificate name, or a certificate name used twice;
 - an unknown provider `type`, key type, format or propagation check;
+- an unknown notifier `type`, method or format, an invalid header name, a notifier with both `body` and `format`, or a placeholder that does not exist;
 - a certificate entry that refers to an ACME server, DNS provider or store that is not defined, or that lists no DNS name or no store.
 
 Every problem is reported, not only the first. Each message names the table, the key and, where known, the file, environment variable or vault secret that set the value. On a configuration error the program exits with code 2.
@@ -303,6 +367,33 @@ format = "pem"
 [store.staging]
 type = "directory"
 path = "/var/lib/butterbot/staging-certs"
+
+# --- Notifiers: who is told about the events of a run ---------------------
+
+# A Microsoft Teams workflow that is told about failures.
+[notify.teams]
+type = "webhook"
+format = "teams"
+events = ["failure", "expiring"]
+# The URL of the workflow is the secret notify.teams.url:
+#   environment: BUTTERBOT__NOTIFY__TEAMS__URL
+#   Key Vault:   notify--teams--url
+
+# An endpoint with a body of its own, a key in a header and a certificate
+# from a private authority. Its URL is the secret notify.console.url.
+[notify.console]
+type = "webhook"
+method = "POST"
+body = '{"title": "{{summary}}", "text": "{{details}}"}'
+content_type = "application/json"
+ca_file = "/etc/butterbot/console-ca.pem"
+timeout = "10s"
+# The key is the secret notify.console.access_key:
+#   environment: BUTTERBOT__NOTIFY__CONSOLE__ACCESS_KEY
+#   Key Vault:   notify--console--access-key
+
+[notify.console.headers]
+X-API-KEY = "{{access_key}}"
 
 # --- Certificates ---------------------------------------------------------
 

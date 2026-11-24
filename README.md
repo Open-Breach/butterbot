@@ -9,6 +9,7 @@ Everything it talks to is a named provider in the configuration:
 - **ACME servers**: where certificates come from.
 - **DNS providers**: where the validation records live.
 - **Certificate stores**: where certificates go.
+- **Notifiers**: who is told when a certificate fails.
 
 Each certificate says which of each it uses, so one Butterbot can serve several certificate authorities, DNS hosts and destinations.
 
@@ -151,6 +152,7 @@ With Let's Encrypt the suggested window opens when about a third of the lifetime
 - [Configuration](docs/configuration.md): files, environment variables, Key Vault, every setting, a complete example.
 - [Providers](docs/providers.md): each ACME, DNS and store type, with the permissions it needs.
 - [Events](docs/events.md): the events a run writes to the log, and how to monitor that the job runs.
+- [Notifications](docs/notifications.md): sending the events to Microsoft Teams or to another HTTP endpoint.
 - [Deployment](docs/deployment.md): the container image, a Kubernetes CronJob, and the steps for replacing an existing certificate job.
 
 ## Development
