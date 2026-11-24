@@ -1,2 +1,5 @@
 /target
 /certificates
+# A local configuration, read by the VS Code launch configurations. It names
+# real zones and vaults, so it is not committed.
+/butterbot.toml
