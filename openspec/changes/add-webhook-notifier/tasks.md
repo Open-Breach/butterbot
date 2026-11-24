@@ -8,9 +8,9 @@
 
 ## 2. Templates
 
-- [ ] 2.1 Implement template parsing with the fixed placeholder list, rejecting unknown placeholders when the configuration is loaded; verify with tests for each placeholder and for an unknown one
-- [ ] 2.2 Implement rendering with position-aware escaping (URL, header, JSON body, other body) and the unescaped `event_json`; verify with tests using a failure reason that contains a quotation mark, a backslash, a line break and non-ASCII text, checking that a rendered JSON body parses
-- [ ] 2.3 Implement the `details` and `exit_code` values for all four event kinds; verify against the existing example events, including the empty `exit_code` for events other than `run_completed`
+- [x] 2.1 Implement template parsing with the fixed placeholder list, rejecting unknown placeholders when the configuration is loaded; verify with tests for each placeholder and for an unknown one
+- [x] 2.2 Implement rendering with position-aware escaping (URL, header, JSON body, other body) and the unescaped `event_json`; verify with tests using a failure reason that contains a quotation mark, a backslash, a line break and non-ASCII text, checking that a rendered JSON body parses
+- [x] 2.3 Implement the `details` and `exit_code` values for all four event kinds; verify against the existing example events, including the empty `exit_code` for events other than `run_completed`
 
 ## 3. Webhook sink
 

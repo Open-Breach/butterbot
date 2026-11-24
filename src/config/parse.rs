@@ -19,6 +19,7 @@ use config::{Value, ValueKind};
 use super::model::*;
 use super::{ConfigError, Secret, parse_duration};
 use crate::events::{EventKind, Selection};
+use crate::webhook::template::{Placeholder, Template, TemplateError};
 
 /// Every top-level key of the configuration.
 const TOP_LEVEL: [&str; 7] = [
@@ -336,12 +337,26 @@ fn parse_notify(reader: &mut Reader<'_>) -> Option<NotifyInstance> {
 
 fn parse_webhook(reader: &mut Reader<'_>) -> Option<Webhook> {
     let mut valid = true;
-    let url = reader.secret("url");
+    // The URL is a secret, so a problem with its placeholders is reported
+    // without quoting any part of it.
+    let url = match reader.secret("url") {
+        None => None,
+        Some(text) => match Template::parse(text.expose()) {
+            Ok(template) => Some(template),
+            Err(error) => {
+                reader.report("url", "", &undisclosed(&error));
+                valid = false;
+                None
+            }
+        },
+    };
     let method = reader.parsed("method");
     valid &= method.is_some() || !reader.present.contains("method");
     let format = reader.parsed::<WebhookFormat>("format");
     valid &= format.is_some() || !reader.present.contains("format");
-    let custom = reader.text("body").map(|(text, _)| text);
+    let custom = reader.parsed_with("body", |text| {
+        Template::parse(text).map_err(|error| format!("{error} ({})", known_placeholders()))
+    });
     valid &= custom.is_some() || !reader.present.contains("body");
     let content_type = reader.string("content_type");
     valid &= content_type.is_some() || !reader.present.contains("content_type");
@@ -677,7 +692,7 @@ impl<'p> Reader<'p> {
 
     /// A table of HTTP headers: each key a header name, each value text. No
     /// message about a header includes its value, which may hold a key.
-    fn header_table(&mut self, key: &str) -> Option<BTreeMap<String, Secret>> {
+    fn header_table(&mut self, key: &str) -> Option<BTreeMap<String, Template>> {
         let value = self.table.remove(key)?;
         let note = origin_note(&value);
         let ValueKind::Table(table) = value.kind else {
@@ -700,9 +715,17 @@ impl<'p> Reader<'p> {
                 continue;
             }
             match value.kind {
-                ValueKind::String(text) => {
-                    headers.insert(name, Secret::new(text));
-                }
+                ValueKind::String(text) => match Template::parse(&text) {
+                    Ok(template) => {
+                        headers.insert(name, template);
+                    }
+                    Err(error) => {
+                        let message =
+                            format!("the value of the header {name} {}", undisclosed(&error));
+                        self.report(key, &note, &message);
+                        valid = false;
+                    }
+                },
                 other => {
                     self.report(
                         key,
@@ -807,6 +830,20 @@ impl<'p> Reader<'p> {
             ));
         }
     }
+}
+
+fn known_placeholders() -> String {
+    format!("the placeholders are: {}", Placeholder::names())
+}
+
+/// What is wrong with a template whose text must not be shown, because it is
+/// a secret: the URL of a webhook or a header value.
+fn undisclosed(error: &TemplateError) -> String {
+    let what = match error {
+        TemplateError::UnknownPlaceholder(_) => "contains an unknown placeholder",
+        TemplateError::Unclosed => "contains `{{` without a closing `}}`",
+    };
+    format!("{what} ({})", known_placeholders())
 }
 
 fn kind_name(kind: &ValueKind) -> &'static str {
