@@ -1,0 +1,64 @@
+{
+    // Debug configurations for the butterbot binary. They need the CodeLLDB
+    // extension (vadimcn.vscode-lldb) and read the configuration from
+    // butterbot.toml in the workspace folder; see the Quick start in README.md.
+    // Secrets are taken from the environment VS Code was started with.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "butterbot check-config",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": ["build", "--bin=butterbot"],
+                "filter": { "name": "butterbot", "kind": "bin" }
+            },
+            "args": ["--log-format", "text", "check-config"],
+            "env": { "BUTTERBOT_CONFIG": "${workspaceFolder}/butterbot.toml" },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "butterbot status",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": ["build", "--bin=butterbot"],
+                "filter": { "name": "butterbot", "kind": "bin" }
+            },
+            "args": ["--log-format", "text", "status"],
+            "env": { "BUTTERBOT_CONFIG": "${workspaceFolder}/butterbot.toml" },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "butterbot run",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": ["build", "--bin=butterbot"],
+                "filter": { "name": "butterbot", "kind": "bin" }
+            },
+            "args": ["--log-format", "text", "--log-level", "debug", "run"],
+            "env": { "BUTTERBOT_CONFIG": "${workspaceFolder}/butterbot.toml" },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "butterbot run --only <certificate>",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": ["build", "--bin=butterbot"],
+                "filter": { "name": "butterbot", "kind": "bin" }
+            },
+            "args": ["--log-format", "text", "--log-level", "debug", "run", "--only", "${input:certificate}"],
+            "env": { "BUTTERBOT_CONFIG": "${workspaceFolder}/butterbot.toml" },
+            "cwd": "${workspaceFolder}"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "certificate",
+            "type": "promptString",
+            "description": "The name of the certificate to process"
+        }
+    ]
+}
