@@ -14,12 +14,12 @@
 
 ## 3. Webhook sink
 
-- [ ] 3.1 Implement `WebhookSink` as an `EventSink`: build the request from method, rendered URL, headers and body, with redirects disabled and the per-attempt timeout; verify against a local test server for the default body, a custom body and a `GET` request
-- [ ] 3.2 Add retries for network errors, 5xx and 429 (3 attempts, within the bus's time limit) and no retry for other statuses; verify with a test server that fails once, one that always fails, and one that answers 400
-- [ ] 3.3 Strip the URL from every transport error and log failures with notifier name, event kind and status or error kind only; verify for each failure path that the captured log contains neither the URL nor the key
-- [ ] 3.4 Support `ca_file` through `http::client_with_roots`; verify delivery to a test server with a private certificate authority succeeds with the file and fails without it
-- [ ] 3.5 Register a sink per configured instance at start, skip an instance whose URL or referenced key is missing or whose URL has an unsupported scheme, and warn for `http`; verify the three scenarios of "Target URL is a secret" and "Notifier without a URL is skipped", and that the run's exit code is unchanged
-- [ ] 3.6 Add an integration test of a full run with a webhook instance: a failed certificate produces a `failure` request and then a `run_completed` request, and an unreachable endpoint leaves the exit code as it would be without the notifier
+- [x] 3.1 Implement `WebhookSink` as an `EventSink`: build the request from method, rendered URL, headers and body, with redirects disabled and the per-attempt timeout; verify against a local test server for the default body, a custom body and a `GET` request
+- [x] 3.2 Add retries for network errors, 5xx and 429 (3 attempts, within the bus's time limit) and no retry for other statuses; verify with a test server that fails once, one that always fails, and one that answers 400
+- [x] 3.3 Strip the URL from every transport error and log failures with notifier name, event kind and status or error kind only; verify for each failure path that the captured log contains neither the URL nor the key
+- [x] 3.4 Support `ca_file` through `http::client_with_roots`; verify delivery to a test server with a private certificate authority succeeds with the file and fails without it
+- [x] 3.5 Register a sink per configured instance at start, skip an instance whose URL or referenced key is missing or whose URL has an unsupported scheme, and warn for `http`; verify the three scenarios of "Target URL is a secret" and "Notifier without a URL is skipped", and that the run's exit code is unchanged
+- [x] 3.6 Add an integration test of a full run with a webhook instance: a failed certificate produces a `failure` request and then a `run_completed` request, and an unreachable endpoint leaves the exit code as it would be without the notifier
 
 ## 4. Teams format
 

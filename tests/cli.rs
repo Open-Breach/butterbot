@@ -1112,6 +1112,240 @@ fn check_config_of_a_complete_webhook_shows_neither_the_url_nor_the_key() {
     }
 }
 
+/// A local server that answers every request with one status and keeps the
+/// requests the program sends to it.
+struct WebhookServer {
+    runtime: tokio::runtime::Runtime,
+    server: wiremock::MockServer,
+}
+
+/// The path of the URLs given to the program. It stands for the credential a
+/// webhook URL carries.
+const WEBHOOK_PATH: &str = "/hook/credential-in-the-path";
+
+impl WebhookServer {
+    fn answering(status: u16) -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let server = runtime.block_on(async {
+            let server = wiremock::MockServer::start().await;
+            wiremock::Mock::given(wiremock::matchers::any())
+                .respond_with(wiremock::ResponseTemplate::new(status))
+                .mount(&server)
+                .await;
+            server
+        });
+        Self { runtime, server }
+    }
+
+    fn url(&self) -> String {
+        format!("{}{WEBHOOK_PATH}", self.server.uri())
+    }
+
+    /// The host and port of the server, as they are written in its URL.
+    fn authority(&self) -> String {
+        self.server.address().to_string()
+    }
+
+    fn requests(&self) -> Vec<wiremock::Request> {
+        self.runtime
+            .block_on(self.server.received_requests())
+            .expect("the server records its requests")
+    }
+
+    /// The bodies of the requests, as JSON, in the order they arrived.
+    fn bodies(&self) -> Vec<Value> {
+        self.requests()
+            .iter()
+            .map(|request| serde_json::from_slice(&request.body).expect("a JSON body"))
+            .collect()
+    }
+}
+
+/// The address of a port on which nothing listens.
+fn closed_port() -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a free port");
+    listener.local_addr().expect("its address")
+}
+
+/// The records of the log about notifiers: the ones with a `notifier` field.
+fn notifier_records(finished: &Finished) -> Vec<Value> {
+    finished
+        .records()
+        .into_iter()
+        .filter(|record| record.get("notifier").is_some())
+        .collect()
+}
+
+// Task 3.6. webhook-notifier, "Webhook notifier type", scenario "One notifier";
+// "Completion is delivered last", scenario "Failure and completion".
+#[test]
+fn run_with_a_failed_certificate_sends_the_failure_and_then_the_completion() {
+    let server = WebhookServer::answering(200);
+    let setup = Setup::new(&["one"]);
+    setup.append("\n[notify.console]\ntype = \"webhook\"\n");
+
+    // The DNS provider has no credential, so the certificate fails.
+    let mut command = setup.command_without_secrets(&["run"]);
+    command
+        .env(ACCOUNT_VARIABLE, "account-credentials")
+        .env(WEBHOOK_URL_VARIABLE, server.url());
+    let finished = finish(command);
+
+    assert_eq!(finished.code, Some(1), "{}", finished.describe());
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2, "{}", finished.describe());
+    for request in &requests {
+        assert_eq!(request.method.as_str(), "POST");
+        assert_eq!(request.url.path(), WEBHOOK_PATH);
+    }
+    let bodies = server.bodies();
+    assert_eq!(bodies[0]["event"], "failure", "the failure comes first");
+    assert_eq!(bodies[0]["certificate"], "one");
+    assert_eq!(bodies[0]["step"], "configuration");
+    assert_eq!(
+        bodies[1]["event"], "run_completed",
+        "the completion is last"
+    );
+    assert_eq!(bodies[1]["outcome"], "failed");
+    assert_eq!(bodies[1]["failed"], 1);
+
+    // What was sent is what the log has.
+    let mut logged_failure = finished.events("failure").remove(0);
+    let mut logged_completion = finished.completed();
+    for (logged, sent) in [
+        (&mut logged_failure, &bodies[0]),
+        (&mut logged_completion, &bodies[1]),
+    ] {
+        let logged = logged.as_object_mut().expect("an object");
+        for added_by_the_log in ["level", "message"] {
+            logged.remove(added_by_the_log);
+        }
+        assert_eq!(&Value::Object(logged.clone()), sent);
+    }
+
+    // The URL is in no output. Its use of http is warned about.
+    for output in [&finished.stdout, &finished.stderr] {
+        assert!(!output.contains(WEBHOOK_PATH), "{output}");
+        assert!(!output.contains(&server.authority()), "{output}");
+    }
+    let about_notifiers = notifier_records(&finished);
+    assert_eq!(about_notifiers.len(), 1, "{}", finished.describe());
+    assert_eq!(about_notifiers[0]["level"], "warn");
+    assert_eq!(about_notifiers[0]["notifier"], "console");
+}
+
+// Task 3.6. run-events, "Delivery failures never change the run", with the
+// notifier type of the program: an endpoint that cannot be reached leaves the
+// exit code as it is without the notifier.
+#[test]
+fn run_with_an_unreachable_endpoint_ends_as_it_does_without_the_notifier() {
+    let run = |notifier: &str| {
+        let setup = Setup::new(&["one"]);
+        setup.holds("one", 60);
+        setup.append(notifier);
+        let mut command = setup.command(&["run"]);
+        if !notifier.is_empty() {
+            command.env(
+                WEBHOOK_URL_VARIABLE,
+                format!("http://{}{WEBHOOK_PATH}", closed_port()),
+            );
+        }
+        finish(command)
+    };
+
+    let without = run("");
+    // The instance selects one event, so that the test waits for the retries
+    // of one delivery only.
+    let with = run("\n[notify.console]\ntype = \"webhook\"\nevents = [\"run_completed\"]\n");
+
+    assert_eq!(without.code, Some(0), "{}", without.describe());
+    assert_eq!(with.code, without.code, "{}", with.describe());
+    assert_eq!(with.completed()["outcome"], "success");
+    assert_eq!(with.completed()["checked"], 1);
+
+    let about_notifiers = notifier_records(&with);
+    let undelivered: Vec<&Value> = about_notifiers
+        .iter()
+        .filter(|record| record["level"] == "error")
+        .collect();
+    assert_eq!(undelivered.len(), 1, "{}", with.describe());
+    assert_eq!(undelivered[0]["notifier"], "console");
+    assert_eq!(undelivered[0]["undelivered_event"], "run_completed");
+    assert_eq!(undelivered[0]["reason"], "the connection failed");
+    assert!(!with.stdout.contains(WEBHOOK_PATH), "{}", with.stdout);
+}
+
+// webhook-notifier, "Notifier without a URL is skipped", scenario "Run with a
+// missing URL".
+#[test]
+fn run_with_a_notifier_without_a_url_names_the_path_and_is_otherwise_normal() {
+    let run = |notifier: &str| {
+        let setup = Setup::new(&["one", "two"]);
+        setup.holds("one", 60);
+        setup.holds("two", 60);
+        setup.append(notifier);
+        finish(setup.command(&["run"]))
+    };
+
+    let without = run("");
+    let finished = run("\n[notify.teams]\ntype = \"webhook\"\nformat = \"teams\"\n");
+
+    assert_eq!(without.code, Some(0), "{}", without.describe());
+    assert_eq!(
+        finished.code,
+        without.code,
+        "the exit code depends on the certificates only: {}",
+        finished.describe()
+    );
+    let records = finished.records();
+    let about_notifiers = notifier_records(&finished);
+    assert_eq!(about_notifiers.len(), 1, "{}", finished.describe());
+    assert_eq!(about_notifiers[0]["level"], "error");
+    assert_eq!(about_notifiers[0]["notifier"], "teams");
+    assert!(
+        about_notifiers[0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.starts_with("notify.teams.url is not set")),
+        "{}",
+        about_notifiers[0]
+    );
+    let error_at = records
+        .iter()
+        .position(|record| record.get("notifier").is_some())
+        .expect("the error");
+    let run_started_at = records
+        .iter()
+        .position(|record| record["message"] == "run started")
+        .expect("the run starts");
+    assert!(
+        error_at < run_started_at,
+        "the error is logged at the start"
+    );
+
+    let completed = finished.completed();
+    assert_eq!(
+        completed["checked"], 2,
+        "certificates are processed normally"
+    );
+    assert_eq!(completed["failed"], 0);
+    assert_eq!(completed["outcome"], without.completed()["outcome"]);
+}
+
+// The same configuration without the notifier ends the same way.
+#[test]
+fn run_without_a_notifier_is_as_before() {
+    let setup = Setup::new(&["one"]);
+    setup.holds("one", 60);
+
+    let finished = finish(setup.command(&["run"]));
+
+    assert_eq!(finished.code, Some(0), "{}", finished.describe());
+    assert!(notifier_records(&finished).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // The account new command
 // ---------------------------------------------------------------------------

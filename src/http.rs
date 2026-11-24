@@ -23,6 +23,17 @@ pub fn client() -> Result<reqwest::Client> {
 /// Builds an HTTP client that trusts the bundled web PKI roots and, in
 /// addition, the certificates in `extra_roots`, each given as PEM text.
 pub fn client_with_roots(extra_roots: &[String]) -> Result<reqwest::Client> {
+    build(extra_roots, reqwest::redirect::Policy::default())
+}
+
+/// Builds a client like [`client_with_roots`] that does not follow redirects:
+/// a 3xx answer is returned as it is. For requests that carry a credential
+/// which must not reach a host the configuration never named.
+pub fn client_without_redirects(extra_roots: &[String]) -> Result<reqwest::Client> {
+    build(extra_roots, reqwest::redirect::Policy::none())
+}
+
+fn build(extra_roots: &[String], redirects: reqwest::redirect::Policy) -> Result<reqwest::Client> {
     let mut roots =
         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     for text in extra_roots {
@@ -55,6 +66,7 @@ pub fn client_with_roots(extra_roots: &[String]) -> Result<reqwest::Client> {
         .with_no_client_auth();
     reqwest::Client::builder()
         .tls_backend_preconfigured(tls)
+        .redirect(redirects)
         .user_agent(concat!("butterbot/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
@@ -67,6 +79,11 @@ mod tests {
     #[test]
     fn client_can_be_built() {
         super::client().expect("the bundled roots and the TLS backend are usable");
+    }
+
+    #[test]
+    fn client_without_redirects_can_be_built() {
+        super::client_without_redirects(&[]).expect("the same client, with another policy");
     }
 
     #[test]
