@@ -10,10 +10,12 @@ use clap::{Parser, Subcommand};
 use crate::config::{
     AzureSecretVault, ConfigError, Loaded, PATH_VARIABLE, SecretVault, config_paths,
 };
+use crate::events::EventKind;
 use crate::logging::{Level, LogFormat, Logger};
 
 mod account;
 mod check_config;
+mod notify;
 mod run;
 mod status;
 
@@ -25,8 +27,8 @@ mod status;
     version,
     about,
     arg_required_else_help = true,
-    after_help = "Exit codes: 0 success, 1 at least one certificate failed, \
-                  2 configuration or usage error, 3 interrupted by a signal."
+    after_help = "Exit codes: 0 success, 1 at least one certificate failed or a test event was \
+                  not delivered, 2 configuration or usage error, 3 interrupted by a signal."
 )]
 pub struct Cli {
     /// A configuration file. May be given several times; later files override
@@ -81,6 +83,11 @@ pub enum Command {
         #[command(subcommand)]
         command: AccountCommand,
     },
+    /// Check the notifiers that receive the events of a run.
+    Notify {
+        #[command(subcommand)]
+        command: NotifyCommand,
+    },
 }
 
 #[derive(Debug, Subcommand, PartialEq, Eq)]
@@ -90,6 +97,22 @@ pub enum AccountCommand {
         /// The name of the ACME server in the configuration.
         #[arg(long, value_name = "NAME")]
         acme: String,
+    },
+}
+
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum NotifyCommand {
+    /// Send one sample event through a notifier and say whether it was
+    /// delivered. The sample is marked as a test. No certificate is processed.
+    Test {
+        /// The name of the notifier in the configuration.
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// The kind of the sample event: run_completed, failure, renewed or
+        /// expiring.
+        #[arg(long, value_name = "KIND", default_value = "failure")]
+        event: EventKind,
     },
 }
 
@@ -174,6 +197,9 @@ pub async fn execute(cli: &Cli) -> Exit {
         Command::Account {
             command: AccountCommand::New { acme },
         } => account::new(cli, acme).await,
+        Command::Notify {
+            command: NotifyCommand::Test { name, event },
+        } => notify::test(cli, name, *event).await,
     }
 }
 

@@ -28,8 +28,8 @@
 
 ## 5. Command line
 
-- [ ] 5.1 Add `butterbot notify test <name> [--event <kind>]`, delivering one sample event marked as a test through the real sink without writing an event to the log; verify the four scenarios of "The notify test command" against a local test server, including the exit codes
-- [ ] 5.2 Update `--help` text and the command list in the README; verify the commands shown run as written
+- [x] 5.1 Add `butterbot notify test <name> [--event <kind>]`, delivering one sample event marked as a test through the real sink without writing an event to the log; verify the four scenarios of "The notify test command" against a local test server, including the exit codes
+- [x] 5.2 Update `--help` text and the command list in the README; verify the commands shown run as written
 
 ## 6. Documents
 

@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: The notify test command
-`butterbot notify test <name>` SHALL send one sample event through the named notifier instance and report whether it was delivered. The sample SHALL be marked as a test in its certificate name and its text. `--event <kind>` SHALL choose the kind of the sample, `failure` by default. The command SHALL process no certificate. It SHALL exit with 0 when the sample was delivered, 1 when it was not, and 2 for a configuration or usage error.
+`butterbot notify test <name>` SHALL send one sample event through the named notifier instance and report whether it was delivered. The sample SHALL carry the certificate name `butterbot-test`, and the reason of a `failure` sample SHALL say that it is a test. `--event <kind>` SHALL choose the kind of the sample, `failure` by default. The command SHALL process no certificate. It SHALL exit with 0 when the sample was delivered, 1 when it was not, and 2 for a configuration or usage error.
 
 #### Scenario: Working notifier
 - **WHEN** `butterbot notify test teams` is run and the endpoint accepts the request
