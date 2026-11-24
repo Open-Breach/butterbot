@@ -253,7 +253,8 @@ What has been checked, and how:
 | The CronJob manifest on this page | `kubectl apply --dry-run=client`, on every change. | Pass |
 | Azure DNS, Cloudflare and Azure Key Vault | Automated tests against HTTP exchanges constructed from the providers' API documentation. No real account was used. | Pass |
 | The webhook notifier: the request for every setting, retries, redirects, an endpoint with a private certificate authority, a full run with a failed certificate, and `butterbot notify test` | Automated tests against a test server on the same machine. They run on every change. | Pass |
-| The body for Microsoft Teams (`format = "teams"`) | Compared with Microsoft's documentation of the workflow trigger "When a Teams webhook request is received", as it was on 24 November 2026. No Teams workflow was used. | Not yet delivered to Teams; see below |
+| The body for Microsoft Teams (`format = "teams"`) | Compared with Microsoft's documentation of the workflow trigger "When a Teams webhook request is received", as it was on 24 November 2026. | Pass |
+| A test event reaches a Teams workflow | The owner sent a sample with `butterbot notify test` to a real workflow on 24 November 2026; see below. | Pass |
 
 ### Runs against real services, 24 November 2026
 
@@ -280,6 +281,15 @@ wildcard-example-net: not due, becomes due 2027-01-22T16:35:27Z
 
 The first went through Cloudflare, the second through Azure DNS.
 
+### A test event to Microsoft Teams, 24 November 2026
+
+The owner sent a sample event with `butterbot notify test` to a workflow of the Workflows app in Teams, with the workflow's URL as the secret `notify.<notifier>.url`. The table records what the owner reported. The command, its output and the card were not recorded.
+
+| Check | What the owner saw | Result |
+|---|---|---|
+| A test event reaches a Teams workflow | A card arrived. Its heading is the summary of the event, and the fields of the event are listed below it as names and values. | Pass |
+| Text is shown as it is | Nothing in the card was shown as emphasis. A sample has field names with an underscore, such as `stored_expiry`. It has no value that begins with `*` or `_`, so this says nothing about names such as `*.example.com`; that check is below. | Pass, for what a sample contains |
+
 ### Not yet verified
 
 These parts of the end-to-end check have not been run, or their result was not recorded:
@@ -295,6 +305,5 @@ These parts of the end-to-end check have not been run, or their result was not r
 | Renewal of a certificate that another tool's account issued: one warning that the server refused the order naming it, then the certificate is issued | `butterbot run --only <entry of the other tool> --force` | not yet run |
 | Interruption: `SIGTERM` during the propagation wait gives exit code 3 and leaves no challenge record | `butterbot run --only <entry> --force`, then `SIGTERM` | not yet run |
 | The same against the staging server of Let's Encrypt, with a test vault | a test entry of its own, as in step 4 of the cutover | not yet run |
-| A test event reaches a Teams workflow: the card shows the summary as its heading and every field of the event | `butterbot notify test <notifier>`, with the workflow's URL as the secret `notify.<notifier>.url`; see [Notifications](notifications.md) | not yet run |
-| A real failure reaches the same workflow | `butterbot run --only <entry that fails>`, for example an entry whose DNS provider has no credential | not yet run |
-| Teams shows names such as `*.example.com` and `_acme-challenge.example.com` as they are, and not as emphasis | `butterbot notify test <notifier> --event renewed`, and the real failure above | not yet run |
+| A real failure reaches the Teams workflow that received the test event | `butterbot run --only <entry that fails>`, for example an entry whose DNS provider has no credential | not yet run |
+| Teams shows names such as `*.example.com` and `_acme-challenge.example.com` as they are, and not as emphasis | The events of a real run for a wildcard certificate: the `names` of a `renewed` event, or the reason of a failed validation. The samples of `butterbot notify test` contain no such name. | not yet run |
