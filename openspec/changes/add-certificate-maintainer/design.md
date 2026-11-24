@@ -38,6 +38,8 @@ Constraints:
 - HTTP-01 or TLS-ALPN-01 validation. DNS-01 is the only method; it is the only one that covers wildcards.
 - A certificate whose names live in different DNS provider instances.
 - A plugin system that loads providers at run time. Providers are compiled in.
+- A fallback ACME server. Decided by the owner on 2026-11-24: when a server is unavailable, the certificate is simply tried again by the next daily run. With a 30-day renewal period that leaves about 30 attempts before the certificate expires.
+- Detecting that no run happened. Decided by the owner on 2026-11-24 not to pursue for now; the `run_completed` event stays as the signal such a check could use.
 - Everything listed as "not part of this change" in `proposal.md`.
 
 ## Decisions
@@ -236,8 +238,7 @@ Deployment configuration lives outside this repository. The steps for replacing 
 
 None of these changes the specs or tasks of this change.
 
-- **Notification channel.** Which channel the events are bound to. The owner is deciding; a notifier type is a follow-up change.
-- **Fallback ACME server.** Whether a certificate may name a second server to try when the first fails.
+- **Notification channel.** Settled on 2026-11-24: a webhook notifier, with Microsoft Teams as the first target. It is specified in the change `add-webhook-notifier`.
 - **Image publishing and reference manifests.** Which registry and which CI publish the image, and whether the reference CronJob lives here or only in the deployment repository. This change delivers the Dockerfile and documents the CronJob settings.
 - **Validation retries within a run.** To be decided from the logged propagation times and failure reasons.
 - **CAA pre-check.** `check-config` could warn when a name's CAA records exclude the configured CA. Becomes relevant with a second CA.
