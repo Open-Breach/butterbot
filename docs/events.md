@@ -15,7 +15,19 @@ The names of the events and of their fields are an interface. They stay the same
 
 Every event is written to the log, as one record that contains all the fields of the event. Events are written whatever `--log-level` is set to.
 
-This version has no notification channel. The program has an extension point for one: a notifier receives every event, or only the kinds it selects. A notifier that cannot deliver an event is logged and never changes the outcome or the exit code of a run.
+Events are also delivered to every configured notifier (`[notify.<name>]`). A notifier receives every event, or only the kinds it selects with `events`. There is one notifier type, `webhook`, which sends each event as an HTTP request, for example to a Microsoft Teams workflow. [Notifications](notifications.md) shows how to set one up, and [Configuration](configuration.md) lists its settings.
+
+Within a run, a notifier receives `run_completed` after every other event of that run.
+
+A notifier that cannot deliver an event is logged and never changes the outcome or the exit code of a run. The record has the name of the notifier, the kind of the event and the reason, and it has no `event` field, so it is never taken for the event itself:
+
+| Field | Meaning |
+|---|---|
+| `notifier` | The name of the notifier instance. |
+| `undelivered_event` | The kind of the event that was not delivered. |
+| `reason` | The status the endpoint answered with, or the kind of error. Never the URL. |
+
+An event that could not be delivered is not sent again later. The log always has it.
 
 ## Monitoring that the job runs
 

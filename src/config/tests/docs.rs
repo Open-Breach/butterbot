@@ -90,6 +90,41 @@ fn complete_example_sets_every_setting() {
         .propagation_timeout
         .is_some()));
     assert!(any_certificate(|certificate| certificate.settle.is_some()));
+
+    // Notifiers. Settings with a built-in value are looked for in the text.
+    for key in ["method", "content_type", "timeout"] {
+        assert!(
+            text.contains(&format!("\n{key} = ")),
+            "the example sets `{key}`"
+        );
+    }
+    let webhooks: Vec<&Webhook> = config
+        .notify
+        .values()
+        .map(|instance| {
+            let NotifierKind::Webhook(webhook) = &instance.kind;
+            webhook
+        })
+        .collect();
+    assert!(
+        config
+            .notify
+            .values()
+            .any(|instance| instance.events != crate::events::Selection::All)
+    );
+    assert!(
+        webhooks
+            .iter()
+            .any(|webhook| webhook.body == WebhookBody::Teams)
+    );
+    assert!(
+        webhooks
+            .iter()
+            .any(|webhook| matches!(webhook.body, WebhookBody::Custom { .. }))
+    );
+    assert!(webhooks.iter().any(|webhook| !webhook.headers.is_empty()));
+    assert!(webhooks.iter().any(|webhook| webhook.uses_access_key()));
+    assert!(webhooks.iter().any(|webhook| webhook.ca_file.is_some()));
 }
 
 #[test]
@@ -117,7 +152,7 @@ fn complete_example_keeps_secrets_out_of_the_file() {
             mentioned += 1;
         }
     }
-    assert_eq!(mentioned, 8, "four secrets are named, each in both sources");
+    assert_eq!(mentioned, 12, "six secrets are named, each in both sources");
 }
 
 /// The rows of the form "| `path` | `name` |" in the document.
@@ -212,4 +247,177 @@ fn documented_defaults_are_the_built_in_values() {
     assert_eq!(dns.propagation_resolvers, defaults::propagation_resolvers());
     assert!(DOCUMENT.contains(&format!("reads `{DEFAULT_PATH}`")));
     assert!(DOCUMENT.contains(&format!("`{PATH_VARIABLE}` names another file")));
+}
+
+// --- Notifiers (task 6.1 of `add-webhook-notifier`) --------------------------
+
+/// The part of the document about `[notify.<name>]`.
+fn notifier_section() -> &'static str {
+    DOCUMENT
+        .split("\n### `[notify.<name>]`: notifiers\n")
+        .nth(1)
+        .expect("the section exists")
+        .split("\n### ")
+        .next()
+        .expect("the section has content")
+}
+
+/// Every key and value name the parser reads for a notifier: the text
+/// literals in its functions that are written like a setting.
+fn notifier_settings_the_parser_accepts() -> Vec<&'static str> {
+    const PARSER: &str = include_str!("../parse.rs");
+    let start = PARSER
+        .find("fn parse_notify(")
+        .expect("the notifier parser");
+    let end = PARSER
+        .find("fn parse_certificates(")
+        .expect("the end of the notifier parser");
+    let mut settings: Vec<&str> = PARSER[start..end]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .filter(|literal| {
+            !literal.is_empty()
+                && literal
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        })
+        .collect();
+    settings.sort_unstable();
+    settings.dedup();
+    settings
+}
+
+#[test]
+fn every_notifier_setting_the_parser_accepts_is_in_the_document() {
+    let settings = notifier_settings_the_parser_accepts();
+    // A check of the check: the list is what is expected to be found.
+    assert_eq!(
+        settings,
+        [
+            "access_key",
+            "body",
+            "ca_file",
+            "content_type",
+            "events",
+            "format",
+            "headers",
+            "method",
+            "timeout",
+            "type",
+            "url",
+            "webhook",
+        ]
+    );
+    let section = notifier_section();
+    for setting in settings {
+        if setting == "webhook" {
+            assert!(section.contains("| `type` | required | `webhook`. |"));
+        } else {
+            assert!(
+                section.contains(&format!("\n| `{setting}` | ")),
+                "the document has a row for `{setting}`"
+            );
+        }
+    }
+    for value in WebhookMethod::ALL
+        .iter()
+        .map(|method| method.as_str())
+        .chain(WebhookFormat::ALL.iter().map(|format| format.as_str()))
+        .chain(crate::events::EventKind::ALL.map(|kind| kind.as_str()))
+    {
+        assert!(
+            section.contains(&format!("`{value}`")),
+            "the document names the value `{value}`"
+        );
+    }
+}
+
+#[test]
+fn documented_placeholders_are_the_ones_that_exist() {
+    use crate::webhook::template::Placeholder;
+
+    let documented: Vec<&str> = notifier_section()
+        .lines()
+        .filter_map(|line| line.strip_prefix("| `{{")?.split("}}`").next())
+        .collect();
+    let existing: Vec<&str> = Placeholder::ALL.iter().map(|one| one.name()).collect();
+    assert_eq!(documented, existing);
+}
+
+#[test]
+fn documented_secret_names_of_a_notifier_follow_the_rules() {
+    let rows: Vec<Vec<&str>> = notifier_section()
+        .lines()
+        .filter(|line| line.starts_with("| `notify."))
+        .map(|line| {
+            line.split('|')
+                .map(|cell| cell.trim().trim_matches('`'))
+                .filter(|cell| !cell.is_empty())
+                .collect()
+        })
+        .collect();
+    assert_eq!(rows.len(), 2, "the URL and the key");
+    for row in rows {
+        let [path, environment, vault] = row.as_slice() else {
+            panic!("three cells: {row:?}");
+        };
+        assert_eq!(env_name(path), *environment);
+        assert_eq!(vault_name(path), *vault);
+    }
+
+    // The names are the ones the listing gives for such an instance.
+    let config = from_toml(
+        "[notify.teams]\ntype = \"webhook\"\n\n[notify.teams.headers]\nX-Key = \
+         \"{{access_key}}\"\n",
+    )
+    .expect("valid");
+    for secret in config.expected_secrets() {
+        assert!(notifier_section().contains(&format!(
+            "| `{}` | `{}` | `{}` |",
+            secret.path, secret.env_name, secret.vault_name
+        )));
+    }
+}
+
+#[test]
+fn documented_defaults_of_a_webhook_are_the_built_in_values() {
+    let config = from_toml("[notify.hook]\ntype = \"webhook\"\n").expect("valid");
+    let NotifierKind::Webhook(webhook) = &config.notify["hook"].kind;
+    let section = notifier_section();
+    for (documented, actual) in [
+        ("| `method` | `\"POST\"` |", webhook.method.to_string()),
+        ("| `format` | `\"json\"` |", WebhookFormat::Json.to_string()),
+        (
+            "| `content_type` | `\"application/json\"` |",
+            defaults::WEBHOOK_CONTENT_TYPE.to_owned(),
+        ),
+        (
+            "| `timeout` | `\"10s\"` |",
+            format_duration(webhook.timeout),
+        ),
+    ] {
+        assert!(section.contains(documented), "the row {documented}");
+        assert!(
+            documented.contains(&actual),
+            "{documented} states the built-in value {actual}"
+        );
+    }
+    assert_eq!(webhook.body, WebhookBody::Json);
+    assert_eq!(config.notify["hook"].events, crate::events::Selection::All);
+    assert!(section.contains("| `events` | every kind |"));
+    assert!(section.contains("At least `\"1s\"`."));
+    assert!(
+        from_toml("[notify.hook]\ntype = \"webhook\"\ntimeout = \"1s\"\n").is_ok()
+            && from_toml("[notify.hook]\ntype = \"webhook\"\ntimeout = \"0s\"\n").is_err()
+    );
+}
+
+#[test]
+fn document_no_longer_says_that_there_is_no_notifier_type() {
+    for document in [DOCUMENT, include_str!("../../../docs/events.md")] {
+        assert!(!document.contains("has no notifier type"));
+        assert!(!document.contains("has no notification channel"));
+        assert!(document.contains("webhook"));
+    }
 }

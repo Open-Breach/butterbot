@@ -33,8 +33,8 @@
 
 ## 6. Documents
 
-- [ ] 6.1 Replace the "no notifier type" text in `docs/configuration.md` and `docs/events.md` with the `webhook` settings, the placeholder table and the secret names; verify every setting accepted by the parser appears in the document
-- [ ] 6.2 Write `docs/notifications.md` with a Teams walk-through (create the workflow, store the URL, configure, test), a health-check style example using `{{exit_code}}`, and an example with a key in a header; verify each configuration example in the document loads without errors in a test
+- [x] 6.1 Replace the "no notifier type" text in `docs/configuration.md` and `docs/events.md` with the `webhook` settings, the placeholder table and the secret names; verify every setting accepted by the parser appears in the document
+- [x] 6.2 Write `docs/notifications.md` with a Teams walk-through (create the workflow, store the URL, configure, test), a health-check style example using `{{exit_code}}`, and an example with a key in a header; verify each configuration example in the document loads without errors in a test
 
 ## 7. Checks
 
