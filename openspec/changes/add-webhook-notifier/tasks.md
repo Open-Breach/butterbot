@@ -23,8 +23,8 @@
 
 ## 4. Teams format
 
-- [ ] 4.1 Check Microsoft's current documentation for the payload accepted by a workflow with the "When a Teams webhook request is received" trigger and record the source and date in a comment next to the implementation
-- [ ] 4.2 Implement `format = "teams"` as a `serde_json` value with one Adaptive Card (summary heading, one fact per event field); verify with snapshot tests for all four event kinds
+- [x] 4.1 Check Microsoft's current documentation for the payload accepted by a workflow with the "When a Teams webhook request is received" trigger and record the source and date in a comment next to the implementation
+- [x] 4.2 Implement `format = "teams"` as a `serde_json` value with one Adaptive Card (summary heading, one fact per event field); verify with snapshot tests for all four event kinds
 
 ## 5. Command line
 
