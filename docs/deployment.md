@@ -253,16 +253,43 @@ What has been checked, and how:
 | The CronJob manifest on this page | `kubectl apply --dry-run=client`, on every change. | Pass |
 | Azure DNS, Cloudflare and Azure Key Vault | Automated tests against HTTP exchanges constructed from the providers' API documentation. No real account was used. | Pass |
 
-**Not yet verified: a real certificate authority and real providers.** The end-to-end check against Let's Encrypt staging, with a zone on Azure DNS, a zone on Cloudflare and a test vault, has not been recorded. When it has been run, its commands and results belong here:
+### Runs against real services, 24 November 2026
+
+The owner ran Butterbot from a terminal against Let's Encrypt, Cloudflare, Azure DNS and an Azure Key Vault. This was the production server of Let's Encrypt, not the staging server the end-to-end check names. The table records what `butterbot status` showed after the runs. The commands of the runs themselves and their logs were not recorded. The names below stand in for the real ones.
+
+| Check | What `butterbot status` showed afterwards | Result |
+|---|---|---|
+| Issuance through Cloudflare, into Key Vault and a `directory` store | Five entries, each a wildcard and its base name. Every certificate is in both stores with the same expiry, 90 days ahead, and is not due. The five expiry times lie within one minute, as they do when certificates are issued side by side. | Pass |
+| Issuance through Azure DNS, into Key Vault | One entry, a wildcard and its base name, whose certificate had been deleted from the vault before the run. The vault holds a new certificate, 90 days ahead, and it is not due. | Pass |
+| Certificates of another tool are left alone | Fourteen entries whose certificates another tool had put into the vault. Each is shown with its names and its expiry and as not due. Their expiry was the same before and after the runs. | Pass |
+
+Two entries from that output:
+
+```
+wildcard-example-org: not due, becomes due 2027-01-22T03:41:14Z
+  names: *.example.org, example.org
+  store vault: a certificate for *.example.org, example.org, expires 2027-02-22T00:57:09Z
+  store local: a certificate for *.example.org, example.org, expires 2027-02-22T00:57:09Z
+
+wildcard-example-net: not due, becomes due 2027-01-22T16:35:27Z
+  names: *.example.net, example.net
+  store vault: a certificate for *.example.net, example.net, expires 2027-02-22T13:51:22Z
+```
+
+The first went through Cloudflare, the second through Azure DNS.
+
+### Not yet verified
+
+These parts of the end-to-end check have not been run, or their result was not recorded:
 
 | Check | Command | Result |
 |---|---|---|
-| The configuration is valid and complete | `butterbot check-config` | not yet run |
-| Before the first run, the certificates are due | `butterbot status` | not yet run |
-| First issuance, Azure DNS zone | `butterbot run --only <entry on Azure DNS>` | not yet run |
-| First issuance, Cloudflare zone | `butterbot run --only <entry on Cloudflare>` | not yet run |
-| The certificates are in the test vault and not due | `butterbot status` | not yet run |
-| A consumer reads a certificate from the vault and receives the certificate, its chain and the private key | `az keyvault secret show --vault-name <test vault> --name <entry> --query value` (the value is the PFX bundle, base64-encoded) | not yet run |
+| The configuration is valid and complete | `butterbot check-config` | not recorded |
+| Before the first run, the certificates are due | `butterbot status` | not recorded |
+| The challenge records are gone after a run | `dig TXT _acme-challenge.<name> +short` prints nothing | not yet run |
+| A consumer reads a certificate from the vault and receives the certificate, its chain and the private key | `az keyvault secret show --vault-name <vault> --name <entry> --query value` (the value is the PFX bundle, base64-encoded) | not yet run |
 | A second run does nothing | `butterbot run` | not yet run |
 | Forced renewal | `butterbot run --only <entry> --force` | not yet run |
+| Renewal of a certificate that another tool's account issued: one warning that the server refused the order naming it, then the certificate is issued | `butterbot run --only <entry of the other tool> --force` | not yet run |
 | Interruption: `SIGTERM` during the propagation wait gives exit code 3 and leaves no challenge record | `butterbot run --only <entry> --force`, then `SIGTERM` | not yet run |
+| The same against the staging server of Let's Encrypt, with a test vault | a test entry of its own, as in step 4 of the cutover | not yet run |
