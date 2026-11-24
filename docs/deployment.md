@@ -252,6 +252,8 @@ What has been checked, and how:
 | The container image on `linux/amd64` and `linux/arm64`: default command, other commands, unprivileged user, read-only root filesystem, stopping during a run | Automated tests that start the image with Docker, on a machine of each platform. They run on every change. | Pass |
 | The CronJob manifest on this page | `kubectl apply --dry-run=client`, on every change. | Pass |
 | Azure DNS, Cloudflare and Azure Key Vault | Automated tests against HTTP exchanges constructed from the providers' API documentation. No real account was used. | Pass |
+| The webhook notifier: the request for every setting, retries, redirects, an endpoint with a private certificate authority, a full run with a failed certificate, and `butterbot notify test` | Automated tests against a test server on the same machine. They run on every change. | Pass |
+| The body for Microsoft Teams (`format = "teams"`) | Compared with Microsoft's documentation of the workflow trigger "When a Teams webhook request is received", as it was on 24 November 2026. No Teams workflow was used. | Not yet delivered to Teams; see below |
 
 ### Runs against real services, 24 November 2026
 
@@ -293,3 +295,6 @@ These parts of the end-to-end check have not been run, or their result was not r
 | Renewal of a certificate that another tool's account issued: one warning that the server refused the order naming it, then the certificate is issued | `butterbot run --only <entry of the other tool> --force` | not yet run |
 | Interruption: `SIGTERM` during the propagation wait gives exit code 3 and leaves no challenge record | `butterbot run --only <entry> --force`, then `SIGTERM` | not yet run |
 | The same against the staging server of Let's Encrypt, with a test vault | a test entry of its own, as in step 4 of the cutover | not yet run |
+| A test event reaches a Teams workflow: the card shows the summary as its heading and every field of the event | `butterbot notify test <notifier>`, with the workflow's URL as the secret `notify.<notifier>.url`; see [Notifications](notifications.md) | not yet run |
+| A real failure reaches the same workflow | `butterbot run --only <entry that fails>`, for example an entry whose DNS provider has no credential | not yet run |
+| Teams shows names such as `*.example.com` and `_acme-challenge.example.com` as they are, and not as emphasis | `butterbot notify test <notifier> --event renewed`, and the real failure above | not yet run |

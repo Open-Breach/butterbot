@@ -380,8 +380,8 @@ fn details_have_every_field_of_the_event_except_its_kind() {
 }
 
 // webhook-notifier, "Placeholders", scenarios "Exit code in the URL" and
-// "Successful run"; "Missing and unknown placeholders", scenario "No value for
-// this event". The requests themselves are tested with the sink.
+// "Successful run"; "Missing and unknown placeholders", scenario
+// "No value for this event". The requests themselves are tested with the sink.
 #[test]
 fn exit_code_is_that_of_the_run_and_empty_for_other_events() {
     use crate::cli::Exit;

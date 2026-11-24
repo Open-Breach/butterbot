@@ -1055,8 +1055,8 @@ fn check_config_lists_the_url_of_a_webhook_and_its_key_only_when_referenced() {
     );
 }
 
-// webhook-notifier, "Headers and access key", scenario "Key referenced but
-// missing": `check-config` lists the key as missing.
+// webhook-notifier, "Headers and access key", scenario
+// "Key referenced but missing": `check-config` lists the key as missing.
 #[test]
 fn check_config_lists_a_referenced_key_that_is_missing() {
     let setup = Setup::new(&["one"]);
@@ -1293,8 +1293,8 @@ fn run_with_an_unreachable_endpoint_ends_as_it_does_without_the_notifier() {
     assert!(!with.stdout.contains(WEBHOOK_PATH), "{}", with.stdout);
 }
 
-// webhook-notifier, "Notifier without a URL is skipped", scenario "Run with a
-// missing URL".
+// webhook-notifier, "Notifier without a URL is skipped", scenario
+// "Run with a missing URL".
 #[test]
 fn run_with_a_notifier_without_a_url_names_the_path_and_is_otherwise_normal() {
     let run = |notifier: &str| {

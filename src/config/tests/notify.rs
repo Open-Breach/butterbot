@@ -398,8 +398,8 @@ fn access_key_is_expected_only_when_a_template_uses_it() {
     }
 }
 
-// webhook-notifier, "Headers and access key", scenario "Key referenced but
-// missing": the listing.
+// webhook-notifier, "Headers and access key", scenario
+// "Key referenced but missing": the listing.
 #[test]
 fn referenced_access_key_is_listed_with_its_source_names_and_whether_found() {
     let text = "[notify.console]\ntype = \"webhook\"\n\n[notify.console.headers]\nX-API-KEY = \

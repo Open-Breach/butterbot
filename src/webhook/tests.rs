@@ -370,8 +370,8 @@ async fn key_may_be_part_of_the_url_and_of_the_body() {
 }
 
 // webhook-notifier, "Placeholders", scenarios "Exit code in the URL" and
-// "Successful run"; "Missing and unknown placeholders", scenario "No value for
-// this event".
+// "Successful run"; "Missing and unknown placeholders", scenario
+// "No value for this event".
 #[tokio::test]
 async fn exit_code_in_the_url_is_that_of_the_run() {
     let server = server_answering(200).await;
@@ -976,8 +976,8 @@ fn read_request(stream: &mut impl Read) -> Option<Vec<u8>> {
     }
 }
 
-// webhook-notifier, "Additional trusted certificates", scenario "Endpoint with
-// a private certificate authority".
+// webhook-notifier, "Additional trusted certificates", scenario
+// "Endpoint with a private certificate authority".
 #[tokio::test]
 async fn endpoint_with_a_private_authority_is_trusted_with_its_ca_file() {
     let endpoint = PrivateEndpoint::start();
@@ -1190,8 +1190,8 @@ fn https_url_is_accepted_without_a_warning() {
     assert!(capture.lines().is_empty(), "{}", capture.text());
 }
 
-// webhook-notifier, "Notifier without a URL is skipped", scenario "Run with a
-// missing URL": the log names the path, and nothing else changes. That the
+// webhook-notifier, "Notifier without a URL is skipped", scenario
+// "Run with a missing URL": the log names the path, and nothing else changes. That the
 // certificates are processed and the exit code is theirs is tested in
 // `tests/cli.rs`.
 #[tokio::test]
@@ -1242,8 +1242,8 @@ async fn notifier_without_a_url_is_reported_with_its_path_and_skipped() {
     );
 }
 
-// webhook-notifier, "Headers and access key", scenario "Key referenced but
-// missing": the instance is treated like a notifier without a URL.
+// webhook-notifier, "Headers and access key", scenario
+// "Key referenced but missing": the instance is treated like a notifier without a URL.
 #[tokio::test]
 async fn notifier_whose_referenced_key_is_missing_is_reported_and_skipped() {
     let server = server_answering(200).await;
