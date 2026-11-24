@@ -8,6 +8,7 @@ mod docs;
 mod env;
 mod files;
 mod model;
+mod notify;
 mod resolve;
 mod secrets;
 mod validation;

@@ -998,6 +998,121 @@ fn check_config_of_an_invalid_configuration_lists_every_problem_and_exits_with_2
 }
 
 // ---------------------------------------------------------------------------
+// Webhook notifiers
+// ---------------------------------------------------------------------------
+
+const WEBHOOK_URL_VARIABLE: &str = "BUTTERBOT__NOTIFY__CONSOLE__URL";
+const WEBHOOK_KEY_VARIABLE: &str = "BUTTERBOT__NOTIFY__CONSOLE__ACCESS_KEY";
+
+impl Setup {
+    /// Adds text to the end of the configuration file.
+    fn append(&self, text: &str) {
+        let mut configuration =
+            fs::read_to_string(self.path("butterbot.toml")).expect("the configuration file");
+        configuration.push_str(text);
+        self.write("butterbot.toml", &configuration);
+    }
+}
+
+// webhook-notifier, "Notifier without a URL is skipped": `check-config` lists
+// the path as a missing secret. Task 1.3: with its name in each source, and
+// the key only when a template uses it.
+#[test]
+fn check_config_lists_the_url_of_a_webhook_and_its_key_only_when_referenced() {
+    let setup = Setup::new(&["one"]);
+    setup.append("\n[notify.console]\ntype = \"webhook\"\naccess_key = \"not-referenced\"\n");
+
+    let finished = finish(setup.command(&["check-config"]));
+
+    assert_eq!(finished.code, Some(2), "{}", finished.describe());
+    let text = &finished.stdout;
+    assert!(
+        text.contains(
+            "  notify.console.url: MISSING\n    environment variable: \
+             BUTTERBOT__NOTIFY__CONSOLE__URL\n    Key Vault secret:     notify--console--url\n"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("notify.console.access_key"), "{text}");
+    assert!(
+        text.contains("1 secret is missing: notify.console.url."),
+        "{text}"
+    );
+}
+
+// webhook-notifier, "Headers and access key", scenario "Key referenced but
+// missing": `check-config` lists the key as missing.
+#[test]
+fn check_config_lists_a_referenced_key_that_is_missing() {
+    let setup = Setup::new(&["one"]);
+    setup.append(
+        "\n[notify.console]\ntype = \"webhook\"\n\n[notify.console.headers]\nX-API-KEY = \
+         \"{{access_key}}\"\n",
+    );
+    let mut command = setup.command(&["check-config"]);
+    command.env(
+        WEBHOOK_URL_VARIABLE,
+        "https://console.example.com/hook/credential",
+    );
+
+    let finished = finish(command);
+
+    assert_eq!(finished.code, Some(2), "{}", finished.describe());
+    let text = &finished.stdout;
+    assert!(text.contains("  notify.console.url: found\n"), "{text}");
+    assert!(
+        text.contains(
+            "  notify.console.access_key: MISSING\n    environment variable: \
+             BUTTERBOT__NOTIFY__CONSOLE__ACCESS_KEY\n    Key Vault secret:     \
+             notify--console--access-key\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("1 secret is missing: notify.console.access_key."),
+        "{text}"
+    );
+    assert!(
+        !text.contains("console.example.com") && !finished.stderr.contains("console.example.com"),
+        "the URL is not shown"
+    );
+}
+
+// webhook-notifier, "Nothing secret in the output": the output of `check-config`.
+#[test]
+fn check_config_of_a_complete_webhook_shows_neither_the_url_nor_the_key() {
+    let setup = Setup::new(&["one"]);
+    setup.append(
+        "\n[notify.console]\ntype = \"webhook\"\n\n[notify.console.headers]\nX-API-KEY = \
+         \"{{access_key}}\"\n",
+    );
+    let mut command = setup.command(&["check-config"]);
+    command
+        .env(
+            WEBHOOK_URL_VARIABLE,
+            "https://console.example.com/hook/credential",
+        )
+        .env(WEBHOOK_KEY_VARIABLE, "console-key");
+
+    let finished = finish(command);
+
+    assert_eq!(finished.code, Some(0), "{}", finished.describe());
+    let text = &finished.stdout;
+    assert!(text.contains("  notify.console.url: found\n"), "{text}");
+    assert!(
+        text.contains("  notify.console.access_key: found\n"),
+        "{text}"
+    );
+    assert!(text.contains("Every required secret was found."), "{text}");
+    for secret in ["console.example.com", "credential", "console-key"] {
+        assert!(
+            !text.contains(secret) && !finished.stderr.contains(secret),
+            "{secret} is not shown"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The account new command
 // ---------------------------------------------------------------------------
 

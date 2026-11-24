@@ -109,7 +109,7 @@ fn unknown_type_names_the_instance_and_the_type() {
         [
             "dns.route: unknown type \"route53\" (known types: azure-dns, cloudflare)",
             "store.bucket: unknown type \"s3\" (known types: azure-key-vault, directory)",
-            "notify.chat: unknown type \"slack\" (this version has no types of this kind)",
+            "notify.chat: unknown type \"slack\" (known types: webhook)",
         ]
     );
 }
