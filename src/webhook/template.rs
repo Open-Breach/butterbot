@@ -274,7 +274,7 @@ pub fn fields(event: &Event) -> Vec<(String, String)> {
 /// The value of a field as a person reads it: text without quotation marks, a
 /// list as its items separated by commas, and `none` for a field without a
 /// value.
-fn field_text(value: &Value) -> String {
+pub(super) fn field_text(value: &Value) -> String {
     match value {
         Value::Null => "none".to_owned(),
         Value::String(text) => text.clone(),
