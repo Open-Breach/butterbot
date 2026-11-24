@@ -38,7 +38,7 @@
 
 ## 7. Checks
 
-- [ ] 7.1 Run `openspec validate add-webhook-notifier --strict` and confirm every scenario in the three delta specs has a test; verify by listing the scenario-to-test mapping in the pull request description
+- [x] 7.1 Run `openspec validate add-webhook-notifier --strict` and confirm every scenario in the three delta specs has a test; verify by listing the scenario-to-test mapping in the pull request description
 - [ ] 7.2 Deliver a test event and a real failure to an actual Teams workflow and confirm the card shows the summary and the fields; verify by adding the result to the "Verified against" table in `docs/deployment.md` (needs a Teams workflow; the owner does this)
 
 ## Workflow follow-up
