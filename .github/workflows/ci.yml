@@ -1,8 +1,19 @@
 name: CI
 
+# The checks of a change. They run for every push to a branch and for every
+# pull request, and the release workflow calls them for a version tag
+# (release.yml). A tag does not start them by itself, or a release would run
+# them twice.
+#
+# Runners: Depot's when the repository belongs to Open-Breach, GitHub's own of
+# the same platform for any other owner, so that a fork never waits for a
+# runner it does not have. One label per job. The jobs that compile Rust or
+# build the image get four processors, the small ones two.
 on:
   push:
+    branches: ['**']
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -15,19 +26,28 @@ env:
 jobs:
   check:
     name: fmt, clippy, test
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository_owner == 'Open-Breach' && 'depot-ubuntu-24.04-4' || 'ubuntu-24.04' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The toolchain and its components are pinned in rust-toolchain.toml.
       - name: Install the Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Restore the ACME test server
         id: pebble
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
           key: pebble-${{ env.PEBBLE_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+      # Not every runner image has Go: Depot's for arm64 does not.
+      - name: Install Go
+        if: steps.pebble.outputs.cache-hit != 'true'
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: '1.26'
+          cache: false
       - name: Build the ACME test server
         if: steps.pebble.outputs.cache-hit != 'true'
         run: |
@@ -54,32 +74,57 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-latest
+            artifact: image-linux-amd64
+            depot: depot-ubuntu-24.04-4
+            github: ubuntu-24.04
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+            artifact: image-linux-arm64
+            depot: depot-ubuntu-24.04-arm-4
+            github: ubuntu-24.04-arm
+    runs-on: ${{ github.repository_owner == 'Open-Breach' && matrix.depot || matrix.github }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install the Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Restore the ACME test server
         id: pebble
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin
           key: pebble-${{ env.PEBBLE_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+      # Not every runner image has Go: Depot's for arm64 does not.
+      - name: Install Go
+        if: steps.pebble.outputs.cache-hit != 'true'
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: '1.26'
+          cache: false
       - name: Build the ACME test server
         if: steps.pebble.outputs.cache-hit != 'true'
         run: |
           go install "github.com/letsencrypt/pebble/v2/cmd/pebble@${PEBBLE_VERSION}"
           go install "github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@${PEBBLE_VERSION}"
+      # Without the attestations Docker would attach to the build by itself.
+      # Docker's containerd image store, which Depot's runners use, keeps
+      # them beside the image, and what is saved and pushed is then a list
+      # and not one image. A release is attested by the release workflow.
       - name: Build the image
-        run: docker build --tag butterbot:dev .
+        run: docker build --provenance=false --tag butterbot:dev .
       - name: Run the image
+        id: image
         run: |
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' butterbot:dev)" = "${{ matrix.platform }}"
           docker run --rm butterbot:dev --version
+          # The identifier of the image the tests below run against: the
+          # digest of its configuration, which is the same in an archive, in
+          # a registry and in either of Docker's image stores. Docker's own
+          # ID of an image is not: the containerd image store shows the
+          # digest of the manifest instead.
+          docker save --output "$RUNNER_TEMP/before-the-tests.tar" butterbot:dev
+          echo "id=$(.github/scripts/image-id.sh "$RUNNER_TEMP/before-the-tests.tar")" >> "$GITHUB_OUTPUT"
       # The same program with the settings that point it at the ACME test
       # server, for the tests that issue a certificate from a container.
       - name: Build the image for the tests
@@ -89,13 +134,46 @@ jobs:
           BUTTERBOT_IMAGE: butterbot:dev
           BUTTERBOT_TEST_IMAGE: butterbot:test
         run: cargo test --locked --features container-tests --test container
+      # The image the tests ran against is handed on as it is: a release
+      # publishes this archive and builds nothing a second time. The archive
+      # must hold the image with the identifier noted before the tests.
+      - name: Save the tested image
+        env:
+          ARCHIVE: ${{ runner.temp }}/butterbot-${{ matrix.artifact }}.tar
+          TESTED: ${{ steps.image.outputs.id }}
+        run: |
+          docker save --output "$ARCHIVE" butterbot:dev
+          saved="$(.github/scripts/image-id.sh "$ARCHIVE")"
+          echo "tested: $TESTED"
+          echo "saved:  $saved"
+          test "$saved" = "$TESTED"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/butterbot-${{ matrix.artifact }}.tar
+          if-no-files-found: error
+          # Long enough for a release to wait for its approval.
+          retention-days: 7
+
+  # The workflows themselves, and the scripts they run.
+  workflows:
+    name: workflows
+    runs-on: ${{ github.repository_owner == 'Open-Breach' && 'depot-ubuntu-24.04' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint the workflows and their scripts
+        run: .github/scripts/lint-workflows.sh
 
   # The reference CronJob in docs/deployment.md, given to a cluster.
   manifest:
     name: manifest
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository_owner == 'Open-Breach' && 'depot-ubuntu-24.04' || 'ubuntu-24.04' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Take the manifest out of the document
         run: |
           awk '/^```yaml$/ { inside = 1; next } /^```$/ { inside = 0 } inside' docs/deployment.md > "$RUNNER_TEMP/butterbot.yaml"

@@ -5,7 +5,8 @@
 See `proposal.md` for the motivation. What exists today:
 
 - `Dockerfile` builds one statically linked program into an otherwise empty image, for `linux/amd64` and `linux/arm64`, each compiled on its own platform.
-- `.github/workflows/ci.yml` runs on every push and pull request. Its `image` job runs once per platform on a machine of that platform (`ubuntu-latest` and `ubuntu-24.04-arm`): it builds `butterbot:dev`, runs `--version`, builds the `test` stage and runs the container tests. The images are discarded when the job ends.
+- `.github/workflows/ci.yml` runs on every push and pull request. Its `image` job runs once per platform on a machine of that platform: it builds `butterbot:dev`, runs `--version`, builds the `test` stage and runs the container tests. The images are discarded when the job ends.
+- The jobs named GitHub's own runners (`ubuntu-latest` and `ubuntu-24.04-arm`) when this change was written. The builds of Open-Breach run on Depot's runners, and this change moves every job there; see D11.
 - `tests/packaging.rs` holds checks that read repository files (the `Dockerfile`, `docs/deployment.md`, the README's links) without Docker.
 - `docs/deployment.md` says that no image is published yet and shows how to build and push one by hand.
 - The program version is `0.1.0` in `Cargo.toml`. No tag exists.
@@ -55,7 +56,7 @@ The registry is described by `REGISTRY_HOST`, `REGISTRY_USERNAME` and `REGISTRY_
 Each platform's `image` job saves the image it has tested (`docker save`) and uploads it as an artifact, `image-linux-amd64` and `image-linux-arm64`. A single `publish` job downloads both, loads them and pushes them.
 
 - This gives one job that reads the secrets, hence one approval, and it makes the published image the tested one.
-- The image is one static program, so the artifacts are small. Give them a short retention.
+- The image is one static program, so the artifacts are small. Give them a short retention: seven days, which is long enough for a release that waits for its approval, and for running its publishing job again.
 - *Alternatives considered:* pushing from each platform job (the secrets in two jobs, the environment approved more than once, and a release half pushed when one platform fails); building both platforms again in the publishing job (an untested image, and emulation for one platform).
 
 ### D3. The release calls the CI workflow
@@ -142,9 +143,40 @@ If the workflow runs before the environment exists, GitHub creates an empty envi
 - `docs/deployment.md`: "No image is published yet" becomes a plain statement that the project publishes none, followed by the existing build commands.
 - `docs/releasing.md` (new): how to cut a release (version in `Cargo.toml`, merge into `main`, push the tag, approve), what the workflow does, the set-up of D9, how to verify the attestation, and what to do when a release fails half way. Examples use `registry.example.com`.
 
+### D11. Depot's runners for Open-Breach, GitHub's for any other owner
+
+Added on 2026-11-24, on the owner's instruction: all builds of Open-Breach run on Depot.
+
+Every job of every workflow in this repository chooses its runner by the owner of the repository, with the rule Trebuchet's workflows use:
+
+```
+runs-on: ${{ github.repository_owner == 'Open-Breach' && '<Depot label>' || '<GitHub label>' }}
+```
+
+| Jobs | Open-Breach | Any other owner |
+|---|---|---|
+| Compile Rust or build the image, `linux/amd64` (`check`, `image`) | `depot-ubuntu-24.04-4` | `ubuntu-24.04` |
+| The same for `linux/arm64` (`image`) | `depot-ubuntu-24.04-arm-4` | `ubuntu-24.04-arm` |
+| Small jobs (`workflows`, `manifest`, the rehearsal, `verify`, `publish`) | `depot-ubuntu-24.04` | `ubuntu-24.04` |
+
+- *Why by owner:* a fork has no Depot runners. A job that names one would wait for a runner that never comes; with this rule a fork's checks run on GitHub's.
+- *One label per job, never a list.* Depot's documentation selects a runner by one label. A list of labels asks GitHub for a runner that carries all of them, which is how self-hosted runners are selected by hand.
+- The labels were checked against Depot's list of runner types on 2026-11-24. The plain label has two processors, `-4` has four.
+- A job that calls another workflow has no runner of its own; the called jobs name theirs. The owner in the rule is the owner of the calling repository, which is the same one.
+- `ubuntu-latest` is gone from the workflows. GitHub moves that label to a new Ubuntu from time to time, and Depot's label names the version.
+- *Difference from Trebuchet:* its workflows also read a repository variable (`RUNNER_LINUX_X64`) that names another label. Butterbot does not. It has two sizes per platform, which one variable cannot express, and a variable would let the runner of the publishing job be changed without a change to the repository.
+- A test reads `runs-on` of every job in every workflow and fails for a job that does not follow the rule, or that is new and has no size.
+
+Consequences:
+
+- The publishing job, and with it the registry login, runs on a machine of Depot, not of GitHub. See the risks.
+- GitHub records a Depot runner as self-hosted, and so does the attestation of a release. `gh attestation verify` accepts that unless it is told not to (`--deny-self-hosted-runners`); `docs/releasing.md` says so.
+- If Depot is not available, the jobs wait. Nothing switches back to GitHub's runners by itself.
+
 ## Risks / Trade-offs
 
 - **The registry login may be able to overwrite other images in the registry.** → It is released to one job only, after all checks, after the owner's approval, for version tags only. The pipeline has a login of its own that can be withdrawn. The run summary and the attestation give a digest to compare the registry's content with.
+- **The publishing job runs on a Depot runner (D11).** The registry login is then present on a machine of a third party, for the length of that job. → Accepted on the owner's instruction: Open-Breach builds on Depot throughout. The login is the pipeline's own and can be withdrawn on its own (D9).
 - **Masking is GitHub's, not ours.** A tool could print the host in a form that is not the exact secret value. → The script does not transform the host, and the rehearsal checks that the script's own output does not contain it. The owner looks at the log of the first release (task 5.3).
 - **An approved run executes whatever the tagged commit's workflow says.** A change to the release workflow could misuse the secrets once approved. → The tag must lie on `main`, which agents do not push to, and the owner approves only releases he started.
 - **The rehearsal's registry is not the real one.** HTTPS, the real login and the environment are first exercised by the first release. → A missing or wrong setting fails before anything is pushed; a failure later can be run again (D6).
