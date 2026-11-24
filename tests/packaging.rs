@@ -1,10 +1,13 @@
-//! Checks of the Dockerfile and of `docs/deployment.md` that need neither
-//! Docker nor a cluster. The image itself is tested in `tests/container.rs`,
-//! and the manifest is given to `kubectl` in the CI workflow.
+//! Checks of the Dockerfile, of `docs/deployment.md` and of the workflows
+//! that need neither Docker nor a cluster. The image itself is tested in
+//! `tests/container.rs`, the manifest is given to `kubectl` in the CI
+//! workflow, and the publishing steps are rehearsed there against a registry.
 
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
+
+use serde_json::Value;
 
 fn repository_file(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(name);
@@ -222,4 +225,327 @@ fn readme_links_every_document() {
         let link = format!("(docs/{})", name.to_string_lossy());
         assert!(readme.contains(&link), "the README links {link}");
     }
+}
+
+/// A workflow of the repository, parsed.
+fn workflow(name: &str) -> Value {
+    let text = repository_file(&format!(".github/workflows/{name}"));
+    serde_saphyr::from_str(&text).unwrap_or_else(|error| panic!("{name}: {error}"))
+}
+
+/// Every workflow of the repository, with its file name.
+fn workflows() -> Vec<(String, Value)> {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
+    let mut names: Vec<String> = fs::read_dir(directory)
+        .expect(".github/workflows")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| {
+            let parsed = workflow(&name);
+            (name, parsed)
+        })
+        .collect()
+}
+
+/// The jobs of a workflow, with their names.
+fn jobs(workflow: &Value) -> Vec<(&String, &Value)> {
+    workflow["jobs"]
+        .as_object()
+        .expect("a workflow has jobs")
+        .iter()
+        .collect()
+}
+
+/// The steps of a job.
+fn steps(job: &Value) -> &Vec<Value> {
+    job["steps"].as_array().expect("a job has steps")
+}
+
+// image-release, "A version tag starts a release", scenarios "Change to a
+// branch" and "Another tag"; task 1.1. The checks start for a push to a
+// branch and for a pull request, and the release workflow can call them. A
+// tag starts nothing here.
+#[test]
+fn checks_start_for_branches_and_pull_requests_and_can_be_called() {
+    let ci = workflow("ci.yml");
+    let triggers = ci["on"].as_object().expect("the triggers of ci.yml");
+    let mut names: Vec<&str> = triggers.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["pull_request", "push", "workflow_call"]);
+    // Every branch, and with a filter on branches a pushed tag starts nothing.
+    assert_eq!(triggers["push"], serde_json::json!({ "branches": ["**"] }));
+    assert!(triggers["pull_request"].is_null(), "every pull request");
+}
+
+/// The runner labels of a job: Depot's for Open-Breach, and GitHub's for any
+/// other owner of the repository.
+fn runner_labels(file: &str, name: &str, job: &Value) -> Vec<(String, String)> {
+    let runs_on = job["runs-on"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{file}: the job {name} names one runner, not a list"));
+    let choice = runs_on
+        .strip_prefix("${{ github.repository_owner == 'Open-Breach' && ")
+        .and_then(|rest| rest.strip_suffix(" }}"))
+        .and_then(|rest| rest.split_once(" || "))
+        .unwrap_or_else(|| {
+            panic!("{file}: the job {name} chooses its runner by the repository's owner: {runs_on}")
+        });
+    if choice == ("matrix.depot", "matrix.github") {
+        return job["strategy"]["matrix"]["include"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{file}: the job {name} has a matrix"))
+            .iter()
+            .map(|entry| {
+                let label = |key: &str| {
+                    entry[key]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("{file}: {name}: a matrix entry without {key}"))
+                        .to_owned()
+                };
+                (label("depot"), label("github"))
+            })
+            .collect();
+    }
+    let literal = |label: &str| {
+        label
+            .strip_prefix('\'')
+            .and_then(|rest| rest.strip_suffix('\''))
+            .unwrap_or_else(|| panic!("{file}: {name}: {label} is not a label"))
+            .to_owned()
+    };
+    vec![(literal(choice.0), literal(choice.1))]
+}
+
+// Design D11, task 1.4: every job of every workflow runs on a Depot runner
+// when the repository belongs to Open-Breach, and on GitHub's runner of the
+// same platform for any other owner. One label per job. The jobs that
+// compile Rust or build the image get four processors.
+#[test]
+fn every_job_runs_on_depot_for_open_breach_and_on_github_otherwise() {
+    /// A Depot label and the GitHub label of the same platform.
+    type Labels = (&'static str, &'static str);
+    const AMD64: Labels = ("depot-ubuntu-24.04-4", "ubuntu-24.04");
+    const ARM64: Labels = ("depot-ubuntu-24.04-arm-4", "ubuntu-24.04-arm");
+    const SMALL: Labels = ("depot-ubuntu-24.04", "ubuntu-24.04");
+    // Which runners each job gets. A new job is added here.
+    let sizes: [(&str, &str, &[Labels]); 4] = [
+        ("ci.yml", "check", &[AMD64]),
+        ("ci.yml", "image", &[AMD64, ARM64]),
+        ("ci.yml", "workflows", &[SMALL]),
+        ("ci.yml", "manifest", &[SMALL]),
+    ];
+    let mut seen = 0;
+    for (file, workflow) in workflows() {
+        for (name, job) in jobs(&workflow) {
+            if job.get("uses").is_some() {
+                // A call of another workflow: its jobs name their runners.
+                assert!(job.get("runs-on").is_none(), "{file}: {name}");
+                continue;
+            }
+            let expected = sizes
+                .iter()
+                .find(|(in_file, job, _)| *in_file == file && job == name)
+                .unwrap_or_else(|| panic!("{file}: the job {name} has no size in this test"))
+                .2;
+            let labels = runner_labels(&file, name, job);
+            let labels: Vec<(&str, &str)> = labels
+                .iter()
+                .map(|(depot, github)| (depot.as_str(), github.as_str()))
+                .collect();
+            assert_eq!(labels, expected, "{file}: the runners of {name}");
+            seen += 1;
+        }
+    }
+    assert_eq!(seen, sizes.len(), "every job in the table exists");
+}
+
+// image-release, "Only a checked image is published"; task 1.2. Each image
+// job saves the image its container tests ran against, after those tests,
+// and hands it on as an artifact that is named after the platform.
+#[test]
+fn image_jobs_hand_on_the_image_the_container_tests_ran_against() {
+    let ci = workflow("ci.yml");
+    let image = &ci["jobs"]["image"];
+    let artifacts: Vec<(&str, &str)> = image["strategy"]["matrix"]["include"]
+        .as_array()
+        .expect("a matrix")
+        .iter()
+        .map(|entry| {
+            (
+                entry["platform"].as_str().expect("a platform"),
+                entry["artifact"].as_str().expect("an artifact"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        artifacts,
+        [
+            ("linux/amd64", "image-linux-amd64"),
+            ("linux/arm64", "image-linux-arm64"),
+        ]
+    );
+
+    let steps = steps(image);
+    let position = |what: &str, found: &dyn Fn(&Value) -> bool| {
+        steps
+            .iter()
+            .position(found)
+            .unwrap_or_else(|| panic!("the image job has a step that {what}"))
+    };
+    let tests = position("runs the container tests", &|step| {
+        step["run"]
+            .as_str()
+            .is_some_and(|run| run.contains("--test container"))
+    });
+    let tested = steps[tests]["env"]["BUTTERBOT_IMAGE"]
+        .as_str()
+        .expect("the image under test");
+    let save = position("saves the image", &|step| {
+        step["run"]
+            .as_str()
+            .is_some_and(|run| run.contains("docker save "))
+    });
+    let upload = position("uploads the image", &|step| {
+        step["uses"]
+            .as_str()
+            .is_some_and(|uses| uses.starts_with("actions/upload-artifact@"))
+    });
+    assert!(tests < save && save < upload, "tested, saved, uploaded");
+
+    // What is saved is the image the tests ran against, and the step fails
+    // when the archive holds an image with another identifier.
+    let script = steps[save]["run"].as_str().expect("a script");
+    assert!(
+        script.contains(&format!("docker save --output \"$ARCHIVE\" {tested}\n")),
+        "{script}"
+    );
+    assert!(
+        script.contains("saved=\"$(.github/scripts/image-id.sh \"$ARCHIVE\")\"\n"),
+        "{script}"
+    );
+    assert!(
+        script.ends_with("test \"$saved\" = \"$TESTED\"\n"),
+        "{script}"
+    );
+    assert_eq!(
+        steps[save]["env"]["TESTED"],
+        "${{ steps.image.outputs.id }}"
+    );
+    let noted = steps
+        .iter()
+        .position(|step| step["id"] == "image")
+        .expect("the step that notes the identifier");
+    assert!(noted < tests, "the identifier is noted before the tests");
+    assert!(
+        steps[noted]["run"].as_str().expect("a script").contains(
+            &format!("echo \"id=$(docker image inspect --format '{{{{.Id}}}}' {tested})\" >> \"$GITHUB_OUTPUT\"")
+        ),
+        "{}",
+        steps[noted]["run"]
+    );
+
+    let with = &steps[upload]["with"];
+    assert_eq!(with["name"], "${{ matrix.artifact }}");
+    assert_eq!(with["path"], steps[save]["env"]["ARCHIVE"]);
+    assert_eq!(with["if-no-files-found"], "error");
+    let days = with["retention-days"].as_u64().expect("a retention");
+    assert!((1..=14).contains(&days), "a short retention: {days} days");
+}
+
+/// Writes an archive as `docker save` writes it, with one configuration.
+/// `named` is the name the archive gives the configuration.
+fn image_archive(directory: &Path, configuration: &str, named: &str) -> std::path::PathBuf {
+    let content = directory.join("content");
+    fs::create_dir_all(content.join("blobs/sha256")).expect("a directory");
+    fs::write(content.join("blobs/sha256").join(named), configuration).expect("written");
+    fs::write(
+        content.join("manifest.json"),
+        format!(
+            r#"[{{"Config":"blobs/sha256/{named}","RepoTags":["butterbot:dev"],"Layers":[]}}]"#
+        ),
+    )
+    .expect("written");
+    let archive = directory.join("image.tar");
+    let status = Command::new("tar")
+        .arg("-cf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&content)
+        .args(["manifest.json", "blobs"])
+        .status()
+        .expect("tar can be run");
+    assert!(status.success());
+    archive
+}
+
+fn script(name: &str) -> Command {
+    Command::new(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(".github/scripts")
+            .join(name),
+    )
+}
+
+// Task 1.2: the identifier of a saved image is the digest of its
+// configuration, read from the archive.
+#[test]
+fn identifier_of_a_saved_image_is_the_digest_of_its_configuration() {
+    // The SHA-256 digest of `{"architecture":"arm64","os":"linux"}`.
+    let configuration = r#"{"architecture":"arm64","os":"linux"}"#;
+    let digest = "d6f56bc20064075ce319ac2e6fcef5de9ea21773b0a8a4398c4405222971f9c0";
+    let directory = tempfile::TempDir::new().expect("a temporary directory");
+    let archive = image_archive(directory.path(), configuration, digest);
+    let output = script("image-id.sh")
+        .arg(&archive)
+        .output()
+        .expect("the script can be run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("sha256:{digest}\n")
+    );
+}
+
+// An archive that names its configuration by another digest than its own is
+// refused, and so is a file that is not there.
+#[test]
+fn identifier_of_a_saved_image_is_refused_when_the_archive_is_wrong() {
+    let directory = tempfile::TempDir::new().expect("a temporary directory");
+    let other = "0".repeat(64);
+    let archive = image_archive(directory.path(), "{}", &other);
+    let output = script("image-id.sh")
+        .arg(&archive)
+        .output()
+        .expect("the script can be run");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains(&format!("is named {other}, but its digest is ")),
+        "{message}"
+    );
+
+    let output = script("image-id.sh")
+        .arg(directory.path().join("missing.tar"))
+        .output()
+        .expect("the script can be run");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no image archive at "),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
