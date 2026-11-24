@@ -22,7 +22,7 @@ The first version is implemented, from an [OpenSpec](https://github.com/Fission-
 - [Specs](openspec/changes/add-certificate-maintainer/specs/): the behaviour, one file per capability
 - [Tasks](openspec/changes/add-certificate-maintainer/tasks.md): the implementation plan
 
-A second change adds the webhook notifier, which sends the events of a run to Microsoft Teams or to another HTTP endpoint: [proposal](openspec/changes/add-webhook-notifier/proposal.md), [design](openspec/changes/add-webhook-notifier/design.md), [specs](openspec/changes/add-webhook-notifier/specs/) and [tasks](openspec/changes/add-webhook-notifier/tasks.md). It has been tested against a local test server. It has not yet delivered to a real Teams workflow.
+A second change adds the webhook notifier, which sends the events of a run to Microsoft Teams or to another HTTP endpoint: [proposal](openspec/changes/add-webhook-notifier/proposal.md), [design](openspec/changes/add-webhook-notifier/design.md), [specs](openspec/changes/add-webhook-notifier/specs/) and [tasks](openspec/changes/add-webhook-notifier/tasks.md). It has been tested against a local test server, and a test event has been delivered to a real Teams workflow. A real failure has not yet been delivered to one.
 
 It has been tested against an ACME test server. It has not yet run against a public certificate authority.
 
