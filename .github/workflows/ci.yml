@@ -139,7 +139,7 @@ jobs:
       # must hold the image with the identifier noted before the tests.
       - name: Save the tested image
         env:
-          ARCHIVE: ${{ runner.temp }}/butterbot-${{ matrix.artifact }}.tar
+          ARCHIVE: ${{ runner.temp }}/${{ matrix.artifact }}.tar
           TESTED: ${{ steps.image.outputs.id }}
         run: |
           docker save --output "$ARCHIVE" butterbot:dev
@@ -150,10 +150,33 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ runner.temp }}/butterbot-${{ matrix.artifact }}.tar
+          path: ${{ runner.temp }}/${{ matrix.artifact }}.tar
           if-no-files-found: error
           # Long enough for a release to wait for its approval.
           retention-days: 7
+
+  # The publishing steps of a release, against a registry that exists only
+  # for this job, with the two images this run has tested. The registry
+  # requires a login that the job makes up; no secret is used. A release
+  # runs the same script (publish-image.sh) against the real registry.
+  rehearsal:
+    name: rehearsal
+    needs: image
+    runs-on: ${{ github.repository_owner == 'Open-Breach' && 'depot-ubuntu-24.04' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-linux-*
+          path: ${{ runner.temp }}/images
+          merge-multiple: true
+      - name: Rehearse the release
+        run: |
+          .github/scripts/rehearse-publish.sh \
+            "$RUNNER_TEMP/images/image-linux-amd64.tar" \
+            "$RUNNER_TEMP/images/image-linux-arm64.tar"
 
   # The workflows themselves, and the scripts they run.
   workflows:

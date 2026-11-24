@@ -156,6 +156,7 @@ With Let's Encrypt the suggested window opens when about a third of the lifetime
 - [Events](docs/events.md): the events a run writes to the log, and how to monitor that the job runs.
 - [Notifications](docs/notifications.md): sending the events to Microsoft Teams or to another HTTP endpoint.
 - [Deployment](docs/deployment.md): the container image, a Kubernetes CronJob, and the steps for replacing an existing certificate job.
+- [Releasing](docs/releasing.md): how a version becomes a container image in a private registry.
 
 ## Development
 

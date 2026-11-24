@@ -6,13 +6,20 @@
 # shows the digest of the manifest instead.)
 #
 #   image-id.sh <archive>
+#   image-id.sh --platform <archive>    prints the platform, as linux/arm64
 #
-# The archive must hold exactly one image. The identifier is read from the
+# The archive must hold exactly one image. Everything is read from the
 # archive alone, without Docker, and the configuration is hashed again, so
 # that an archive that names one image and holds another is refused.
 set -euo pipefail
 
-archive="${1:?usage: image-id.sh <archive>}"
+usage="usage: image-id.sh [--platform] <archive>"
+print="identifier"
+if [ "${1:-}" = "--platform" ]; then
+  print="platform"
+  shift
+fi
+archive="${1:?$usage}"
 
 if [ ! -f "$archive" ]; then
   echo "image-id: no image archive at $archive" >&2
@@ -21,14 +28,22 @@ fi
 
 # `manifest.json` lists the images of the archive; `Config` is the path of an
 # image's configuration inside the archive, named after its digest.
-config="$(tar --extract --to-stdout --file "$archive" manifest.json \
+config="$(tar -xOf "$archive" manifest.json \
   | jq --raw-output 'if length == 1 then .[0].Config else error("the archive holds \(length) images, not one") end')"
 
+configuration="$(mktemp)"
+trap 'rm -f "$configuration"' EXIT
+tar -xOf "$archive" "$config" > "$configuration"
+
 named="$(basename "$config" .json)"
-actual="$(tar --extract --to-stdout --file "$archive" "$config" | sha256sum | cut -d ' ' -f 1)"
+actual="$(sha256sum < "$configuration" | cut -d ' ' -f 1)"
 if [ "$named" != "$actual" ]; then
   echo "image-id: the configuration in $archive is named $named, but its digest is $actual" >&2
   exit 1
 fi
 
-echo "sha256:$actual"
+if [ "$print" = "platform" ]; then
+  jq --raw-output '"\(.os)/\(.architecture)"' "$configuration"
+else
+  echo "sha256:$actual"
+fi
