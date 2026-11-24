@@ -41,6 +41,23 @@ impl Deployment {
         .await
         .expect("an account at the test server");
 
+        let config = Self::config(&acme, dns, certificates.path(), &credentials);
+        Self {
+            acme,
+            published_in,
+            certificates,
+            config,
+        }
+    }
+
+    /// The configuration for the test servers, with the account whose
+    /// credentials are given.
+    fn config(
+        acme: &AcmeTestServer,
+        dns: &ChallTestSrv,
+        certificates: &Path,
+        credentials: &crate::config::Secret,
+    ) -> Arc<Config> {
         let text = format!(
             r#"
             [acme.pebble]
@@ -74,16 +91,26 @@ impl Deployment {
             credentials = credentials.expose(),
             management = dns.management_url(),
             resolver = dns.dns,
-            path = certificates.path().display(),
+            path = certificates.display(),
         );
         let config = Config::from_layers([Layer::from_toml("test.toml", &text).expect("TOML")])
             .unwrap_or_else(|error| panic!("{error}"));
-        Self {
-            acme,
-            published_in,
-            certificates,
-            config: Arc::new(config),
-        }
+        Arc::new(config)
+    }
+
+    /// Registers another account at the ACME server and uses it from now on,
+    /// as a tool does that takes over the certificates of another one.
+    async fn change_account(&mut self) {
+        let (_, credentials) = AcmeClient::register(
+            "pebble",
+            &self.acme.pebble.directory_url,
+            None,
+            &self.acme.pebble.http(),
+        )
+        .await
+        .expect("another account at the test server");
+        let dns = self.published_in.as_ref().unwrap_or(&self.acme.dns);
+        self.config = Self::config(&self.acme, dns, self.certificates.path(), &credentials);
     }
 
     /// Performs one run, as the program does, with the real clock.
@@ -369,4 +396,53 @@ async fn value_left_behind_by_a_killed_run_does_not_keep_the_next_run_from_valid
             .collect::<Vec<_>>(),
         ["*.example.com", "example.com"]
     );
+}
+
+// acme-issuance, "Renewal names its predecessor", scenario "Predecessor refused";
+// certificate-stores, "Adoption of existing certificates", scenario "Certificate from
+// the previous tool": a certificate that another account had issued is renewed.
+#[tokio::test]
+#[ignore = "needs pebble and pebble-challtestsrv; see src/testing.rs"]
+async fn certificate_of_another_account_is_renewed() {
+    let mut deployment = Deployment::new(false).await;
+    let (first, log) = deployment.run(&Selection::default()).await;
+    assert_eq!(first.renewed(), 1, "{}", log.text());
+    let issued = deployment.stored();
+
+    deployment.change_account().await;
+    let (second, log) = deployment.run(&only_forced()).await;
+
+    assert_eq!(
+        second.outcome,
+        RunOutcome::Success,
+        "{:#?}\n{}",
+        second.certificates,
+        log.text()
+    );
+    assert_eq!(second.renewed(), 1);
+    assert_ne!(deployment.stored().serial, issued.serial);
+    // The server refused the order that named the stored certificate, and
+    // the order was placed again without it.
+    let records = log.json();
+    let refused = records
+        .iter()
+        .find(|record| {
+            record["message"]
+                .as_str()
+                .is_some_and(|message| message.starts_with("the ACME server refused the order"))
+        })
+        .unwrap_or_else(|| panic!("the refusal is in the log:\n{}", log.text()));
+    assert_eq!(refused["level"], "warn");
+    assert_eq!(refused["replaces"], issued.serial.as_str());
+    assert!(
+        refused["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("did not request the certificate being replaced")),
+        "{refused:?}"
+    );
+    let placed = records
+        .iter()
+        .find(|record| record["message"] == "the order is placed")
+        .expect("an order was placed");
+    assert!(placed["replaces"].is_null(), "{placed:?}");
 }

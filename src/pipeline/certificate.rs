@@ -315,7 +315,7 @@ async fn steps(
 
     // --- Order ---------------------------------------------------------------------------
     let log = context.logger.step(name, Step::Order.as_str());
-    let request = OrderRequest {
+    let mut request = OrderRequest {
         names: entry.certificate.names.clone(),
         profile: entry.profile.map(str::to_owned),
         replaces: predecessor(&state.stored, &windows),
@@ -325,7 +325,7 @@ async fn steps(
         context,
         Step::Order,
         None,
-        place_order(context, &*issuer, &request, &log),
+        place_order(context, &*issuer, &mut request, &log),
     )
     .await?;
     log.record(Level::Info, "the order is placed")
@@ -519,7 +519,41 @@ impl crate::store::CertStore for Bounded<'_> {
 
 /// Places the order. A transient failure is retried. A rate limit is waited
 /// out once, when the server states a wait that is within `run.retry_wait_max`.
+/// Places the order. A server may refuse an order because of the certificate
+/// it names as replaced: Let's Encrypt does when that certificate was issued
+/// to another account, as every certificate of a previous tool was, or when
+/// it has been replaced before. Naming the predecessor is a courtesy to the
+/// server and never a condition for issuing, so an order that is refused
+/// while it names one is placed once more without it. `request` then names
+/// none any more.
 async fn place_order(
+    context: &RunContext,
+    issuer: &dyn Issuer,
+    request: &mut OrderRequest,
+    log: &StepLog,
+) -> Result<Box<dyn PendingOrder>> {
+    match place(context, issuer, request, log).await {
+        Err(Error::Permanent(reason)) if request.replaces.is_some() => {
+            let predecessor = request.replaces.take();
+            log.record(
+                Level::Warn,
+                "the ACME server refused the order that names the certificate it replaces; \
+                 placing the order again without naming one",
+            )
+            .field(
+                "replaces",
+                predecessor.map(|certificate| certificate.serial),
+            )
+            .reason(reason)
+            .write();
+            place(context, issuer, request, log).await
+        }
+        other => other,
+    }
+}
+
+/// Places the order as it is asked for, waiting out a short rate limit once.
+async fn place(
     context: &RunContext,
     issuer: &dyn Issuer,
     request: &OrderRequest,

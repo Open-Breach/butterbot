@@ -238,7 +238,7 @@ These steps replace a job that already maintains certificates in a Key Vault. Th
 
 5. **Switch over.** Disable the schedule of the old job and enable Butterbot's CronJob in the same change, so that the two never run against the same certificates.
 
-6. **Watch the first renewal.** When the first certificate becomes due, check the `renewed` event in the log and the certificate in the store.
+6. **Watch the first renewal.** When the first certificate becomes due, check the `renewed` event in the log and the certificate in the store. The first renewal of a certificate that the old job issued logs one warning, that the server refused the order that names the certificate it replaces. That is expected: the certificate was issued to the old job's account. Butterbot places the order again and the certificate is issued.
 
 **Going back.** Enable the old job's schedule and suspend Butterbot's CronJob. Certificates written by either program are valid for the other, as long as name, format and key type are the same.
 

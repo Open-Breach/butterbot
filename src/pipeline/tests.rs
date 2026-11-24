@@ -131,6 +131,8 @@ struct FakeIssuer {
     windows: Mutex<BTreeMap<String, RenewalWindow>>,
     /// The requests of the orders that were placed.
     requests: Mutex<Vec<OrderRequest>>,
+    /// The serial of the predecessor each order named, refused orders included.
+    named: Mutex<Vec<Option<String>>>,
     /// The certificates that were issued.
     issued: Mutex<Vec<IssuedCert>>,
 }
@@ -161,6 +163,12 @@ impl Issuer for FakeIssuer {
     async fn order(&self, request: &OrderRequest) -> Result<Box<dyn PendingOrder>> {
         self.journal
             .add(format!("order {}", request.names.join(",")));
+        self.named.lock().unwrap().push(
+            request
+                .replaces
+                .as_ref()
+                .map(|predecessor| predecessor.serial.clone()),
+        );
         if let Some(failure) = self.order_failures.lock().unwrap().pop_front() {
             return Err(failure);
         }
