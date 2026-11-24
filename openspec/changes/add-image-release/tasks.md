@@ -2,10 +2,10 @@
 
 ## 1. CI hands its images on
 
-- [ ] 1.1 Make `ci.yml` callable from another workflow (`workflow_call`) and restrict its `push` trigger to branches; verify with a test in `tests/packaging.rs` that reads the workflow's triggers, and by the checks of the pull request still running every job
-- [ ] 1.2 In each `image` job, save the image the container tests ran against and upload it as the artifact `image-linux-amd64` or `image-linux-arm64` with a short retention; verify in the run of the pull request that both artifacts exist and that a loaded archive has the identifier of the image that was tested
-- [ ] 1.3 Add a workflow linter to the checks (for example `actionlint`); verify it passes on the existing workflow and fails on a deliberately broken copy
-- [ ] 1.4 Run every job of every workflow on Depot's runners when the repository belongs to Open-Breach and on GitHub's runner of the same platform for any other owner, with one label per job and the sizes of design D11; verify with a test in `tests/packaging.rs` that reads `runs-on` of every job, and in the run of the pull request that every job was given a Depot runner
+- [x] 1.1 Make `ci.yml` callable from another workflow (`workflow_call`) and restrict its `push` trigger to branches; verify with a test in `tests/packaging.rs` that reads the workflow's triggers, and by the checks of the pull request still running every job
+- [x] 1.2 In each `image` job, save the image the container tests ran against and upload it as the artifact `image-linux-amd64` or `image-linux-arm64` with a short retention; verify in the run of the pull request that both artifacts exist and that a loaded archive has the identifier of the image that was tested
+- [x] 1.3 Add a workflow linter to the checks (for example `actionlint`); verify it passes on the existing workflow and fails on a deliberately broken copy
+- [x] 1.4 Run every job of every workflow on Depot's runners when the repository belongs to Open-Breach and on GitHub's runner of the same platform for any other owner, with one label per job and the sizes of design D11; verify with a test in `tests/packaging.rs` that reads `runs-on` of every job, and in the run of the pull request that every job was given a Depot runner
 
 ## 2. Publishing script and rehearsal
 
