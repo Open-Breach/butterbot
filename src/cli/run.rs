@@ -85,7 +85,8 @@ pub(super) async fn run(cli: &Cli, only: &[String], force: bool) -> Exit {
         only: only.to_vec(),
         force,
     };
-    let events = EventBus::new(logger);
+    let mut events = EventBus::new(logger.clone());
+    crate::webhook::register(&config, &mut events, &logger);
     let report = crate::pipeline::run(&context, &config, &selection, &events).await;
     match report.outcome {
         RunOutcome::Success => Exit::Success,

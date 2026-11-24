@@ -22,13 +22,28 @@ pub const FIRST_PAUSE: Duration = Duration::from_secs(2);
 /// Returns the first success, the first non-transient failure, or the failure
 /// of the last attempt. Every failure that leads to another attempt is written
 /// to `log` as a warning; `action` says what was being done.
-pub async fn retry<T, F, Fut>(log: &dyn Log, action: &str, mut op: F) -> Result<T>
+pub async fn retry<T, F, Fut>(log: &dyn Log, action: &str, op: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    retry_with_first_pause(log, action, FIRST_PAUSE, op).await
+}
+
+/// [`retry`] with another pause after the first failed attempt. The number of
+/// attempts and the doubling of the pause are the same.
+pub async fn retry_with_first_pause<T, F, Fut>(
+    log: &dyn Log,
+    action: &str,
+    first_pause: Duration,
+    mut op: F,
+) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
 {
     let mut attempt = 1;
-    let mut pause = FIRST_PAUSE;
+    let mut pause = first_pause;
     loop {
         match op().await {
             Err(error) if error.is_transient() && attempt < MAX_ATTEMPTS => {

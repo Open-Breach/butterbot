@@ -294,9 +294,10 @@ struct Notifier {
 /// Delivers events: always to the log, and to every registered notifier that
 /// selected the event's kind.
 ///
-/// This version has no notifier type, so in the program the registry stays
-/// empty. It is the extension point for a notification channel: a channel is
-/// added by registering a sink, without changing how events are produced.
+/// The registry is the extension point for notification channels: a channel
+/// is added by registering a sink, without changing how events are produced.
+/// The program registers one sink per configured `webhook` instance, see
+/// [`crate::webhook`].
 pub struct EventBus {
     logger: Logger,
     log: LogSink,
