@@ -107,15 +107,24 @@ jobs:
         run: |
           go install "github.com/letsencrypt/pebble/v2/cmd/pebble@${PEBBLE_VERSION}"
           go install "github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@${PEBBLE_VERSION}"
+      # Without the attestations Docker would attach to the build by itself.
+      # Docker's containerd image store, which Depot's runners use, keeps
+      # them beside the image, and what is saved and pushed is then a list
+      # and not one image. A release is attested by the release workflow.
       - name: Build the image
-        run: docker build --tag butterbot:dev .
+        run: docker build --provenance=false --tag butterbot:dev .
       - name: Run the image
         id: image
         run: |
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' butterbot:dev)" = "${{ matrix.platform }}"
           docker run --rm butterbot:dev --version
-          # The identifier of the image the tests below run against.
-          echo "id=$(docker image inspect --format '{{.Id}}' butterbot:dev)" >> "$GITHUB_OUTPUT"
+          # The identifier of the image the tests below run against: the
+          # digest of its configuration, which is the same in an archive, in
+          # a registry and in either of Docker's image stores. Docker's own
+          # ID of an image is not: the containerd image store shows the
+          # digest of the manifest instead.
+          docker save --output "$RUNNER_TEMP/before-the-tests.tar" butterbot:dev
+          echo "id=$(.github/scripts/image-id.sh "$RUNNER_TEMP/before-the-tests.tar")" >> "$GITHUB_OUTPUT"
       # The same program with the settings that point it at the ACME test
       # server, for the tests that issue a certificate from a container.
       - name: Build the image for the tests
@@ -137,10 +146,6 @@ jobs:
           saved="$(.github/scripts/image-id.sh "$ARCHIVE")"
           echo "tested: $TESTED"
           echo "saved:  $saved"
-          # Docker names an image by the digest of its configuration. If the
-          # two differ although nothing rebuilt the image, Docker's image
-          # store has changed what it calls an identifier.
-          docker info --format 'image store: {{.Driver}}'
           test "$saved" = "$TESTED"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

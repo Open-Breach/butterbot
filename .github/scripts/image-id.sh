@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Prints the identifier of the image in an archive written by `docker save`:
-# the digest of the image's configuration, as `sha256:<hex>`. It is what
-# `docker image inspect --format '{{.Id}}'` prints for the same image, and
-# what a registry's manifest of the image names as its `config`.
+# the digest of the image's configuration, as `sha256:<hex>`. It is what a
+# registry's manifest of the image names as its `config`, and what Docker's
+# classic image store shows as the image's ID. (The containerd image store
+# shows the digest of the manifest instead.)
 #
 #   image-id.sh <archive>
 #

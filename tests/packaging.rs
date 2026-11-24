@@ -412,7 +412,7 @@ fn image_jobs_hand_on_the_image_the_container_tests_ran_against() {
     let save = position("saves the image", &|step| {
         step["run"]
             .as_str()
-            .is_some_and(|run| run.contains("docker save "))
+            .is_some_and(|run| run.contains("docker save --output \"$ARCHIVE\" "))
     });
     let upload = position("uploads the image", &|step| {
         step["uses"]
@@ -445,12 +445,23 @@ fn image_jobs_hand_on_the_image_the_container_tests_ran_against() {
         .position(|step| step["id"] == "image")
         .expect("the step that notes the identifier");
     assert!(noted < tests, "the identifier is noted before the tests");
+    let noting = steps[noted]["run"].as_str().expect("a script");
     assert!(
-        steps[noted]["run"].as_str().expect("a script").contains(
-            &format!("echo \"id=$(docker image inspect --format '{{{{.Id}}}}' {tested})\" >> \"$GITHUB_OUTPUT\"")
-        ),
-        "{}",
-        steps[noted]["run"]
+        noting.ends_with(&format!(
+            "docker save --output \"$RUNNER_TEMP/before-the-tests.tar\" {tested}\n\
+             echo \"id=$(.github/scripts/image-id.sh \"$RUNNER_TEMP/before-the-tests.tar\")\" >> \"$GITHUB_OUTPUT\"\n"
+        )),
+        "{noting}"
+    );
+
+    // The image is built as one image, without attestations beside it.
+    let built = steps
+        .iter()
+        .find(|step| step["name"] == "Build the image")
+        .expect("the step that builds the image");
+    assert_eq!(
+        built["run"],
+        format!("docker build --provenance=false --tag {tested} .")
     );
 
     let with = &steps[upload]["with"];
