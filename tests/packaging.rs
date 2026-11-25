@@ -681,8 +681,13 @@ fn assert_every_registry_is_the_one_for_examples(document: &str) {
                 .next()
                 .expect("a word");
             let host = host.strip_prefix("oci://").unwrap_or(host);
-            if host.ends_with("Open-Breach") {
-                // The repository, not an image.
+            let rest = &line[position + "/butterbot".len()..];
+            if host.ends_with("Open-Breach") || host.ends_with("cronjob") {
+                // The repository, or the CronJob of the reference manifest.
+                continue;
+            }
+            if rest.starts_with('/') || host.starts_with('/') || host.contains('$') {
+                // A path on a filesystem, such as /etc/butterbot.
                 continue;
             }
             assert!(
@@ -696,12 +701,6 @@ fn assert_every_registry_is_the_one_for_examples(document: &str) {
                 line[position..].trim_end(),
                 "docker login registry.example.com",
                 "{line}"
-            );
-        }
-        for scheme in ["https://", "http://"] {
-            assert!(
-                !line.contains(scheme) || line.contains("no `https://`"),
-                "an address in {line}"
             );
         }
     }
@@ -776,6 +775,15 @@ fn releasing_document_covers_a_release_from_the_tag_to_the_checks_afterwards() {
     assert!(document.contains("They are kept for seven days."));
     // The runners of Open-Breach are recorded as self-hosted.
     assert!(document.contains("Do not add `--deny-self-hosted-runners`"));
+
+    // The page has no address of a registry: the only mention of a scheme
+    // is the one that says to leave it out.
+    for line in document.lines() {
+        assert!(
+            !line.contains("://") || line.contains("no `https://`") || line.contains("oci://"),
+            "an address in {line}"
+        );
+    }
 
     assert_every_registry_is_the_one_for_examples(&document);
 }
@@ -1150,4 +1158,80 @@ fn release_attests_the_published_digest_under_the_bare_image_name() {
         }
     }
     assert_eq!(attesting, 1);
+}
+
+// image-release, "The project publishes no image", scenario "Reader of the
+// README"; task 4.1. The README says how to build the program from source,
+// says that no image is published, and points to the commands for building
+// one.
+#[test]
+fn readme_says_that_the_program_is_built_from_source_and_no_image_is_published() {
+    let readme = repository_file("README.md");
+    let getting = readme
+        .split("\n## Getting Butterbot\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("the section about getting Butterbot");
+    assert!(
+        getting.contains("Butterbot is a console application, and it is built from source."),
+        "{getting}"
+    );
+    assert!(
+        getting.contains("\n```\ncargo build --release\n```\n"),
+        "{getting}"
+    );
+    assert!(
+        getting.contains("The project publishes no container image, and no prebuilt program."),
+        "{getting}"
+    );
+    // The note that it packs into a container, with the pointer.
+    assert!(
+        getting.contains("Butterbot packs easily into a container")
+            && getting.contains(
+                "[Deployment](docs/deployment.md) has the commands for building an image from it."
+            ),
+        "{getting}"
+    );
+    // The section comes before the example that uses the program.
+    assert!(
+        readme.find("## Getting Butterbot").expect("the section")
+            < readme.find("## Quick start").expect("the example")
+    );
+    assert!(readme.contains("(docs/releasing.md)"));
+    // Nothing in the README offers an image to pull.
+    assert!(!readme.contains("docker pull"), "no image is offered");
+}
+
+// image-release, "The project publishes no image"; task 4.2. The deployment
+// document says that the project publishes no image, and still has the
+// commands for building one from the Dockerfile.
+#[test]
+fn deployment_document_says_that_no_image_is_published_and_how_to_build_one() {
+    let document = repository_file("docs/deployment.md");
+    let image = document
+        .split("\n## The container image\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("the section about the container image");
+    assert!(
+        image.trim_start().starts_with(
+            "The project publishes no container image. Build one from the `Dockerfile` in the \
+             repository, and push it to your own registry:\n"
+        ),
+        "{image}"
+    );
+    assert!(!document.contains("No image is published yet"));
+    assert!(
+        image.contains(
+            "\n```\ndocker buildx build --platform linux/amd64,linux/arm64 --tag \
+             registry.example.com/butterbot:0.1.0 --push .\n```\n"
+        ),
+        "{image}"
+    );
+    assert!(
+        image.contains("`docker build --tag butterbot .`"),
+        "{image}"
+    );
+    assert!(image.contains("[Releasing](releasing.md)"), "{image}");
+    assert_every_registry_is_the_one_for_examples(&document);
 }

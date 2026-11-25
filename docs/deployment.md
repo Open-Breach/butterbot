@@ -1,6 +1,6 @@
 # Deployment
 
-Butterbot runs once and exits. Something else has to start it, once a day. This page describes the container image, a Kubernetes CronJob that runs it, and the steps for replacing an existing certificate job.
+Butterbot runs once and exits. Something else has to start it, once a day. This page describes how to build a container image, a Kubernetes CronJob that runs it, and the steps for replacing an existing certificate job.
 
 - [The container image](#the-container-image)
 - [Kubernetes](#kubernetes)
@@ -9,13 +9,15 @@ Butterbot runs once and exits. Something else has to start it, once a day. This 
 
 ## The container image
 
-The image is built from the `Dockerfile` in the repository. No image is published yet, so build it and push it to your own registry:
+The project publishes no container image. Build one from the `Dockerfile` in the repository, and push it to your own registry:
 
 ```
 docker buildx build --platform linux/amd64,linux/arm64 --tag registry.example.com/butterbot:0.1.0 --push .
 ```
 
 For one platform, `docker build --tag butterbot .` is enough.
+
+A maintainer with a registry of their own can have this done by a workflow when a version tag is pushed; see [Releasing](releasing.md).
 
 What the image is:
 

@@ -28,8 +28,8 @@
 
 ## 4. What the project offers
 
-- [ ] 4.1 Update `README.md`: the program is built from source, the project publishes no image, a short note that it packs into a container with a pointer to `docs/deployment.md`, and `docs/releasing.md` in the list of documents; verify with the existing README link test and a new test for the two statements
-- [ ] 4.2 Update `docs/deployment.md`: replace "No image is published yet" with the statement that the project publishes none, keeping the build commands; verify the commands still run as written
+- [x] 4.1 Update `README.md`: the program is built from source, the project publishes no image, a short note that it packs into a container with a pointer to `docs/deployment.md`, and `docs/releasing.md` in the list of documents; verify with the existing README link test and a new test for the two statements
+- [x] 4.2 Update `docs/deployment.md`: replace "No image is published yet" with the statement that the project publishes none, keeping the build commands; verify the commands still run as written
 
 ## 5. Checks
 
