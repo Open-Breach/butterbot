@@ -457,14 +457,17 @@ fn image_jobs_hand_on_the_image_the_container_tests_ran_against() {
         "{noting}"
     );
 
-    // The image is built as one image, without attestations beside it.
+    // The image is built as one image, without attestations beside it, and
+    // with manifests of one kind whatever the builder would choose.
     let built = steps
         .iter()
         .find(|step| step["name"] == "Build the image")
         .expect("the step that builds the image");
     assert_eq!(
         built["run"],
-        format!("docker build --provenance=false --tag {tested} .")
+        format!(
+            "docker build --provenance=false --output type=docker,oci-mediatypes=false --tag {tested} ."
+        )
     );
 
     let with = &steps[upload]["with"];
@@ -599,14 +602,33 @@ fn checks_rehearse_the_publishing_steps_without_any_secret() {
     // The artifacts of this run, which are the images its jobs have tested.
     assert_eq!(download["with"]["pattern"], "image-linux-*");
     assert!(download["with"].get("run-id").is_none());
-    let rehearse = steps.last().expect("a step");
+    // image-release, "Publishing is rehearsed on every change", scenario
+    // "Publishing steps broken": after the rehearsal, the same rehearsal
+    // with a rule of the publishing steps taken out, which must fail.
+    let scripts: Vec<&str> = steps
+        .iter()
+        .filter_map(|step| step["run"].as_str())
+        .collect();
+    let images = " \\\n  \"$RUNNER_TEMP/images/image-linux-amd64.tar\" \\\n  \
+                  \"$RUNNER_TEMP/images/image-linux-arm64.tar\"\n";
     assert_eq!(
-        rehearse["run"],
-        ".github/scripts/rehearse-publish.sh \\\n  \
-         \"$RUNNER_TEMP/images/image-linux-amd64.tar\" \\\n  \
-         \"$RUNNER_TEMP/images/image-linux-arm64.tar\"\n"
+        scripts,
+        [
+            format!(".github/scripts/rehearse-publish.sh{images}"),
+            format!(".github/scripts/rehearse-broken-publish.sh{images}"),
+        ]
     );
-    assert!(rehearse.get("env").is_none(), "no setting from outside");
+    for step in steps {
+        assert!(step.get("env").is_none(), "no setting from outside");
+        assert!(step.get("continue-on-error").is_none());
+    }
+    let broken = repository_file(".github/scripts/rehearse-broken-publish.sh");
+    assert!(broken.contains("if \"$broken/rehearse-publish.sh\" \"$amd64\" \"$arm64\" >"));
+    // What it takes out is in the script it breaks.
+    assert!(
+        repository_file(".github/scripts/publish-image.sh")
+            .contains("\nif [ -z \"${BASH_REMATCH[4]}\" ]; then\n")
+    );
 
     // The rehearsal runs the script a release runs, and records no
     // attestation.
@@ -666,7 +688,30 @@ fn releasing_document_matches_the_rehearsal_and_the_publishing_steps() {
         assert!(publish.contains(run), "the script runs `{run}`");
     }
     assert!(publish.contains("local_name=\"$image:$version-${platform/\\//-}\""));
-    assert!(publish.contains("sources+=(\"$image@$(digest_of "));
+    assert!(publish.contains("sources+=(\"$image@$manifest_digest\")"));
+
+    // The options the page builds an image with for a rehearsal by hand are
+    // the ones the image job builds with, and the rehearsal's other build
+    // has them too.
+    let options = "docker build --provenance=false --output type=docker,oci-mediatypes=false ";
+    assert!(repository_file(".github/workflows/ci.yml").contains(&format!("run: {options}--tag ")));
+    assert_eq!(
+        document.matches(options).count(),
+        2,
+        "one build per platform"
+    );
+    assert!(rehearsal.contains(options));
+
+    // image-release, "Registry settings come from the environment's
+    // secrets", scenario "Image name": the image is `<REGISTRY_HOST>/butterbot`,
+    // with the host as it was given. The rehearsal pulls it under that name.
+    assert!(publish.contains("\nname=\"butterbot\"\n"));
+    assert!(publish.contains("\nimage=\"$REGISTRY_HOST/$name\"\n"));
+    assert!(
+        rehearsal
+            .contains("docker pull --quiet --platform \"$platform\" \"$host/butterbot:0.1.0\"")
+    );
+    assert!(document.contains("The image is published as `<REGISTRY_HOST>/butterbot`"));
 
     assert_every_registry_is_the_one_for_examples(&document);
 }
@@ -1008,7 +1053,9 @@ fn word_before(line: &str, end: usize) -> &str {
 // come from the environment's secrets", scenario "Repository contents", and
 // "The project publishes no image", scenario "Workflows"; task 3.3. No
 // workflow and no script names a registry: not as the host of an image, not
-// in an address, and not as one of the public registries.
+// in an address, not as the destination of a push and not as the registry
+// of a login. So nothing can be published to a registry other than the one
+// the secrets name, a public one included.
 #[test]
 fn no_workflow_or_script_names_a_registry() {
     // Hosts that an address may name: the one for examples, the machine
@@ -1022,23 +1069,36 @@ fn no_workflow_or_script_names_a_registry() {
         "$host",
         "registry.example.com",
     ];
-    const PUBLIC_REGISTRIES: [&str; 9] = [
-        "docker.io",
-        "ghcr.io",
-        "quay.io",
-        "gcr.io",
-        "pkg.dev",
-        "azurecr.io",
-        "amazonaws.com",
-        "mcr.microsoft.com",
-        "registry.gitlab.com",
-    ];
     let mut images = 0;
     for (file, text) in workflow_files() {
         for (number, line) in text.lines().enumerate() {
             let place = format!("{file}:{}: {line}", number + 1);
-            for registry in PUBLIC_REGISTRIES {
-                assert!(!line.contains(registry), "a public registry in {place}");
+            if line.trim_start().starts_with('#') {
+                // A comment publishes nothing. The other checks below read
+                // comments as well.
+            } else {
+                // What is pushed is named by a variable, which holds the
+                // host that was given. An image that is named in the file
+                // itself could only go to a registry the file chose.
+                if let Some(position) = line.find("docker push ") {
+                    let destination = &line[position + "docker push ".len()..];
+                    assert!(
+                        destination.starts_with("\"$"),
+                        "a destination that is not a variable in {place}"
+                    );
+                }
+                // A name given to an image is a variable too, or a local
+                // name without a host, such as butterbot:dev.
+                for (position, _) in line.match_indices("--tag ") {
+                    let name = line[position + "--tag ".len()..]
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default();
+                    assert!(
+                        name.starts_with("\"$") || !name.contains('/'),
+                        "an image name with a host in {place}"
+                    );
+                }
             }
             // An image `<host>/butterbot`.
             for (position, _) in line.match_indices("/butterbot") {
@@ -1234,4 +1294,46 @@ fn deployment_document_says_that_no_image_is_published_and_how_to_build_one() {
     );
     assert!(image.contains("[Releasing](releasing.md)"), "{image}");
     assert_every_registry_is_the_one_for_examples(&document);
+}
+
+// image-release, "The project publishes no image", scenario "Workflows",
+// and design D2: the steps of the workflows use these actions and no
+// others, each named by a commit. None of them pushes an image or logs in
+// to a registry; what is published is published by the scripts, which the
+// test above reads. A new action is added here.
+#[test]
+fn workflows_use_only_the_known_actions_each_named_by_a_commit() {
+    const ACTIONS: [&str; 7] = [
+        "actions/checkout",
+        "actions/cache",
+        "actions/setup-go",
+        "actions/upload-artifact",
+        "actions/download-artifact",
+        "actions/attest",
+        "Swatinem/rust-cache",
+    ];
+    let mut used = 0;
+    for (file, workflow) in workflows() {
+        for (name, job) in jobs(&workflow) {
+            if let Some(called) = job.get("uses") {
+                assert_eq!(called, "./.github/workflows/ci.yml", "{file}: {name}");
+                continue;
+            }
+            for step in steps(job) {
+                let Some(uses) = step["uses"].as_str() else {
+                    continue;
+                };
+                let (action, commit) = uses
+                    .split_once('@')
+                    .unwrap_or_else(|| panic!("{file}: {name}: {uses}"));
+                assert!(ACTIONS.contains(&action), "{file}: {name} uses {action}");
+                assert!(
+                    commit.len() == 40 && commit.chars().all(|digit| digit.is_ascii_hexdigit()),
+                    "{file}: {name}: {uses} is named by a commit"
+                );
+                used += 1;
+            }
+        }
+    }
+    assert!(used > 0);
 }

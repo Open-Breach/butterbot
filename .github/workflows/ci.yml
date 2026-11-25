@@ -107,12 +107,20 @@ jobs:
         run: |
           go install "github.com/letsencrypt/pebble/v2/cmd/pebble@${PEBBLE_VERSION}"
           go install "github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@${PEBBLE_VERSION}"
-      # Without the attestations Docker would attach to the build by itself.
+      # Two options make the image the same kind of thing whatever builds it.
+      #
+      # Without the attestations Docker would attach to the build by itself:
       # Docker's containerd image store, which Depot's runners use, keeps
       # them beside the image, and what is saved and pushed is then a list
       # and not one image. A release is attested by the release workflow.
+      #
+      # With Docker's media types and not the OCI ones: which of the two a
+      # build writes depends on the version of the builder and on the image
+      # store, and a registry may refuse to move a tag such as `latest` from
+      # a manifest of one kind to a manifest of the other. Docker's are the
+      # ones every combination can write.
       - name: Build the image
-        run: docker build --provenance=false --tag butterbot:dev .
+        run: docker build --provenance=false --output type=docker,oci-mediatypes=false --tag butterbot:dev .
       - name: Run the image
         id: image
         run: |
@@ -175,6 +183,13 @@ jobs:
       - name: Rehearse the release
         run: |
           .github/scripts/rehearse-publish.sh \
+            "$RUNNER_TEMP/images/image-linux-amd64.tar" \
+            "$RUNNER_TEMP/images/image-linux-arm64.tar"
+      # A rehearsal that cannot fail would prove nothing: with a rule of the
+      # publishing steps taken out, it must.
+      - name: Rehearse a broken release
+        run: |
+          .github/scripts/rehearse-broken-publish.sh \
             "$RUNNER_TEMP/images/image-linux-amd64.tar" \
             "$RUNNER_TEMP/images/image-linux-arm64.tar"
 
