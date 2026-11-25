@@ -9,7 +9,7 @@
 
 ## 2. Publishing script and rehearsal
 
-- [ ] 2.1 Write the publishing script under `.github/scripts/` with its inputs (registry host, login, version, the two image archives) and the missing-setting check that names the missing one and prints no value; verify with a test that runs it once per missing setting and checks the message, the exit status and that no registry was contacted
+- [x] 2.1 Write the publishing script under `.github/scripts/` with its inputs (registry host, login, version, the two image archives) and the missing-setting check that names the missing one and prints no value; verify with a test that runs it once per missing setting and checks the message, the exit status and that no registry was contacted
 - [ ] 2.2 Add the rehearsal job to `ci.yml`: a throwaway registry with a login generated in the job, the two image artifacts of the run, a made-up version; verify that it runs without any repository secret and that the script can log in and push to it
 - [ ] 2.3 Implement pushing both platform images, creating the multi-platform image and setting the tags of a release, with the tags set last; verify in the rehearsal that `X.Y.Z`, `X.Y` and `latest` name one image listing exactly `linux/amd64` and `linux/arm64`, that pulling for each platform yields that platform's image, and that each published image has the identifier of the tested one
 - [ ] 2.4 Implement the pre-release rule; verify in the rehearsal that releasing `0.2.0-rc.1` after `0.1.0` sets only `0.2.0-rc.1` and leaves `latest` and `0.1` where they were

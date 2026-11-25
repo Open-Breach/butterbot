@@ -337,9 +337,10 @@ fn every_job_runs_on_depot_for_open_breach_and_on_github_otherwise() {
     const ARM64: Labels = ("depot-ubuntu-24.04-arm-4", "ubuntu-24.04-arm");
     const SMALL: Labels = ("depot-ubuntu-24.04", "ubuntu-24.04");
     // Which runners each job gets. A new job is added here.
-    let sizes: [(&str, &str, &[Labels]); 4] = [
+    let sizes: [(&str, &str, &[Labels]); 5] = [
         ("ci.yml", "check", &[AMD64]),
         ("ci.yml", "image", &[AMD64, ARM64]),
+        ("ci.yml", "rehearsal", &[SMALL]),
         ("ci.yml", "workflows", &[SMALL]),
         ("ci.yml", "manifest", &[SMALL]),
     ];
@@ -559,4 +560,287 @@ fn identifier_of_a_saved_image_is_refused_when_the_archive_is_wrong() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+// ---------------------------------------------------------------------------
+// The publishing script and its rehearsal
+// ---------------------------------------------------------------------------
+
+/// A listener that counts the connections it is offered and answers none.
+struct Untouched {
+    listener: std::net::TcpListener,
+}
+
+impl Untouched {
+    fn new() -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+        listener.set_nonblocking(true).expect("non-blocking");
+        Self { listener }
+    }
+
+    fn host(&self) -> String {
+        format!(
+            "127.0.0.1:{}",
+            self.listener.local_addr().expect("an address").port()
+        )
+    }
+
+    fn connections(&self) -> usize {
+        let mut count = 0;
+        while self.listener.accept().is_ok() {
+            count += 1;
+        }
+        count
+    }
+}
+
+// image-release, "A missing registry setting stops the release", scenario
+// "Environment not set up"; task 2.1. The script is run once without each
+// setting, and once with each setting empty: it fails, names what is
+// missing, prints no value, and contacts no registry.
+#[test]
+fn publishing_stops_at_a_missing_setting_before_it_contacts_a_registry() {
+    let registry = Untouched::new();
+    let host = registry.host();
+    let settings = [
+        ("REGISTRY_HOST", host.as_str()),
+        ("REGISTRY_USERNAME", "the-login-of-the-pipeline"),
+        ("REGISTRY_PASSWORD", "the-password-of-the-pipeline"),
+    ];
+    for (missing, _) in settings {
+        for empty in [false, true] {
+            let mut command = script("publish-image.sh");
+            command
+                .args(["0.1.0", "/no/such/amd64.tar", "/no/such/arm64.tar"])
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .stdin(Stdio::null());
+            for (name, value) in settings {
+                if name != missing {
+                    command.env(name, value);
+                } else if empty {
+                    command.env(name, "");
+                }
+            }
+            let output = command.output().expect("the script can be run");
+            let written = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let case = format!(
+                "{missing} {}:\n{written}",
+                if empty { "empty" } else { "not set" }
+            );
+
+            assert_eq!(output.status.code(), Some(1), "{case}");
+            assert!(
+                written.contains(&format!("publish-image: {missing} not set")),
+                "the message names the missing setting: {case}"
+            );
+            for (_, value) in settings {
+                assert!(!written.contains(value), "no value is printed: {case}");
+            }
+        }
+    }
+
+    // All three at once are all named.
+    let output = script("publish-image.sh")
+        .args(["0.1.0", "/no/such/amd64.tar", "/no/such/arm64.tar"])
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .output()
+        .expect("the script can be run");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("publish-image: REGISTRY_HOST REGISTRY_USERNAME REGISTRY_PASSWORD not set"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(registry.connections(), 0, "no registry was contacted");
+}
+
+// Task 2.1: what else the script refuses before it logs in. A version that
+// is not one, and an archive that is not there, fail with a message and
+// without a connection to the registry.
+#[test]
+fn publishing_checks_the_version_and_the_archives_before_it_logs_in() {
+    let registry = Untouched::new();
+    let run = |arguments: &[&str]| {
+        let output = script("publish-image.sh")
+            .args(arguments)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("REGISTRY_HOST", registry.host())
+            .env("REGISTRY_USERNAME", "the-login")
+            .env("REGISTRY_PASSWORD", "the-password")
+            .output()
+            .expect("the script can be run");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    for version in ["v0.1.0", "0.1", "1", "latest", "0.1.0+build", "01.2.3", ""] {
+        let (code, message) = run(&[version, "/no/such/amd64.tar", "/no/such/arm64.tar"]);
+        assert_eq!(code, Some(1), "{version:?}: {message}");
+        assert!(
+            message.contains("is not a version such as 0.1.0 or 0.2.0-rc.1"),
+            "{version:?}: {message}"
+        );
+    }
+
+    let (code, message) = run(&["0.1.0", "/no/such/amd64.tar", "/no/such/arm64.tar"]);
+    assert_eq!(code, Some(1), "{message}");
+    assert!(
+        message.contains("the image for linux/amd64 is missing"),
+        "{message}"
+    );
+    assert!(message.contains("Nothing was published"), "{message}");
+
+    let (code, message) = run(&["0.1.0"]);
+    assert_eq!(code, Some(1), "{message}");
+    assert!(message.contains("usage: publish-image.sh"), "{message}");
+
+    assert_eq!(registry.connections(), 0, "no registry was contacted");
+}
+
+// image-release, "Nothing else names the registry", scenario "Output of the
+// publishing steps"; design D5. Read from the script itself: no message of
+// its own mentions the host, the login or the image's full name, the output
+// of every tool that could goes to file descriptor 3, and commands are never
+// traced. The rehearsal checks the same on what the script really writes.
+#[test]
+fn publishing_script_never_writes_the_registry_itself() {
+    let text = repository_file(".github/scripts/publish-image.sh");
+    let code: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+
+    for line in &code {
+        assert!(
+            !line.contains("set -x") && !line.contains("xtrace"),
+            "commands are never traced: {line}"
+        );
+        let writes = line.starts_with("say ")
+            || line.starts_with("fail ")
+            || line.starts_with("echo ")
+            || line.starts_with("printf ")
+            || line.contains("|| fail ");
+        if writes {
+            for secret in [
+                "$REGISTRY_HOST",
+                "${REGISTRY_HOST",
+                "$REGISTRY_USERNAME",
+                "${REGISTRY_USERNAME",
+                "$REGISTRY_PASSWORD",
+                "${REGISTRY_PASSWORD",
+                "$image",
+                "${image",
+                "$reference",
+                "${sources",
+            ] {
+                // The password is written once, to the login, through a pipe.
+                if *line == r#"if ! printf '%s' "$REGISTRY_PASSWORD" \"# {
+                    continue;
+                }
+                assert!(
+                    !line.contains(secret),
+                    "a message of the script names {secret}: {line}"
+                );
+            }
+        }
+        // A tool that is given the registry writes to file descriptor 3, or
+        // its output is taken by the script and not passed on.
+        let tool = line.starts_with("docker ") || line.starts_with("| docker ");
+        if tool {
+            assert!(
+                line.ends_with(">&3 2>&3")
+                    || line.ends_with(">&3 2>&3; then")
+                    || line.ends_with(r">&3 2>&3 \"),
+                "the output of a tool goes to file descriptor 3: {line}"
+            );
+        }
+    }
+    // The summary and the digest handed on are written from fixed text.
+    assert!(text.contains("| Image | \\`butterbot\\` |"));
+    assert!(text.contains(r#"echo "digest=$digest" >> "$GITHUB_OUTPUT""#));
+}
+
+// image-release, "Publishing is rehearsed on every change", scenarios
+// "Rehearsal" and "Publishing steps broken"; "Publishing waits behind one
+// approval", scenario "Pull request"; task 2.2. The checks of every change
+// run the publishing script against a throwaway registry, with the images
+// of that run, without a secret and without an attestation.
+#[test]
+fn checks_rehearse_the_release_without_a_secret() {
+    let ci = workflow("ci.yml");
+    let rehearsal = &ci["jobs"]["rehearsal"];
+    assert_eq!(rehearsal["needs"], "image", "it takes the tested images");
+    assert!(rehearsal.get("environment").is_none());
+    assert!(
+        rehearsal.get("permissions").is_none(),
+        "read-only, as the workflow is"
+    );
+
+    let steps = steps(rehearsal);
+    let download = steps
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|action| action.starts_with("actions/download-artifact@"))
+        })
+        .expect("the rehearsal downloads the images");
+    assert_eq!(download["with"]["pattern"], "image-linux-*");
+    let run = steps
+        .iter()
+        .filter_map(|step| step["run"].as_str())
+        .find(|run| run.contains("rehearse-release.sh"))
+        .expect("the rehearsal runs the script");
+    for archive in [
+        "image-linux-amd64/butterbot-image-linux-amd64.tar",
+        "image-linux-arm64/butterbot-image-linux-arm64.tar",
+    ] {
+        assert!(run.contains(archive), "{run}");
+    }
+
+    // The rehearsal runs the script a release runs, and not a copy of it.
+    let script = repository_file(".github/scripts/rehearse-release.sh");
+    assert!(script.contains(r#""$scripts/publish-image.sh" "$@""#));
+
+    // No job of the checks reads a secret, the rehearsal included, and none
+    // attests anything.
+    let text = repository_file(".github/workflows/ci.yml");
+    let code: String = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!code.contains("secrets."), "the checks use no secret");
+    assert!(!code.contains("attest"), "the checks attest nothing");
+    assert!(
+        !code.contains("environment:"),
+        "the checks name no environment"
+    );
+}
+
+// Task 2.2: the registry of the rehearsal requires a login that is made up
+// in the job, and the images it starts are pinned.
+#[test]
+fn rehearsal_registry_requires_a_login_made_up_in_the_job() {
+    let script = repository_file(".github/scripts/rehearse-release.sh");
+    assert!(script.contains("--env REGISTRY_AUTH=htpasswd"));
+    assert!(script.contains(r#"password="$(head -c 18 /dev/urandom"#));
+    assert!(
+        script.contains(r#"equal "the registry refuses a request without a login" "$code" "401""#)
+    );
+    for image in ["registry:3@sha256:", "httpd:2.4-alpine@sha256:"] {
+        assert!(script.contains(image), "{image} is pinned by its digest");
+    }
 }
