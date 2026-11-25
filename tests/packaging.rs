@@ -337,9 +337,10 @@ fn every_job_runs_on_depot_for_open_breach_and_on_github_otherwise() {
     const ARM64: Labels = ("depot-ubuntu-24.04-arm-4", "ubuntu-24.04-arm");
     const SMALL: Labels = ("depot-ubuntu-24.04", "ubuntu-24.04");
     // Which runners each job gets. A new job is added here.
-    let sizes: [(&str, &str, &[Labels]); 4] = [
+    let sizes: [(&str, &str, &[Labels]); 5] = [
         ("ci.yml", "check", &[AMD64]),
         ("ci.yml", "image", &[AMD64, ARM64]),
+        ("ci.yml", "rehearsal", &[SMALL]),
         ("ci.yml", "workflows", &[SMALL]),
         ("ci.yml", "manifest", &[SMALL]),
     ];
@@ -559,4 +560,123 @@ fn identifier_of_a_saved_image_is_refused_when_the_archive_is_wrong() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+// image-release, "Publishing is rehearsed on every change", scenario
+// "Rehearsal", and "Publishing waits behind one approval", scenario "Pull
+// request"; task 2.2. The checks of a change rehearse the publishing steps
+// with the two images of the same run, and nothing in them is given a
+// secret or a deployment environment.
+#[test]
+fn checks_rehearse_the_publishing_steps_without_any_secret() {
+    let text = repository_file(".github/workflows/ci.yml");
+    assert!(!text.contains("secrets."), "ci.yml reads no secret");
+    assert!(!text.contains("secrets:"), "ci.yml is handed no secret");
+
+    let ci = workflow("ci.yml");
+    assert_eq!(ci["permissions"], serde_json::json!({ "contents": "read" }));
+    for (name, job) in jobs(&ci) {
+        assert!(
+            job.get("environment").is_none(),
+            "{name} has no environment"
+        );
+        assert!(job.get("permissions").is_none(), "{name} only reads");
+    }
+
+    let rehearsal = &ci["jobs"]["rehearsal"];
+    assert_eq!(rehearsal["needs"], "image", "after both image jobs");
+    let steps = steps(rehearsal);
+    let download = steps
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("actions/download-artifact@"))
+        })
+        .expect("the step that fetches the images");
+    // The artifacts of this run, which are the images its jobs have tested.
+    assert_eq!(download["with"]["pattern"], "image-linux-*");
+    assert!(download["with"].get("run-id").is_none());
+    let rehearse = steps.last().expect("a step");
+    assert_eq!(
+        rehearse["run"],
+        ".github/scripts/rehearse-publish.sh \\\n  \
+         \"$RUNNER_TEMP/images/image-linux-amd64.tar\" \\\n  \
+         \"$RUNNER_TEMP/images/image-linux-arm64.tar\"\n"
+    );
+    assert!(rehearse.get("env").is_none(), "no setting from outside");
+
+    // The rehearsal runs the script a release runs, and records no
+    // attestation.
+    let script = repository_file(".github/scripts/rehearse-publish.sh");
+    assert!(script.contains("\"$scripts/publish-image.sh\" \"$@\""));
+    for (name, job) in jobs(&ci) {
+        for step in self::steps(job) {
+            let uses = step["uses"].as_str().unwrap_or_default();
+            assert!(!uses.contains("attest"), "{name} attests nothing: {uses}");
+        }
+    }
+}
+
+// Task 2.8: what docs/releasing.md says the registry holds is what the
+// rehearsal finds there, and the commands it shows are the ones the
+// publishing steps run.
+#[test]
+fn releasing_document_matches_the_rehearsal_and_the_publishing_steps() {
+    let document = repository_file("docs/releasing.md");
+    let rehearsal = repository_file(".github/scripts/rehearse-publish.sh");
+    let publish = repository_file(".github/scripts/publish-image.sh");
+
+    // After 0.1.0 and then 0.2.0-rc.1: the tags the rehearsal expects.
+    let expected = "\"0.1 0.1.0 0.1.0-linux-amd64 0.1.0-linux-arm64 0.2.0-rc.1 \
+                    0.2.0-rc.1-linux-amd64 0.2.0-rc.1-linux-arm64 latest\"";
+    assert!(rehearsal.contains(expected), "the rehearsal's tags");
+    let holds = document
+        .split("## What the registry holds afterwards")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("the section about what the registry holds");
+    let mut documented: Vec<&str> = holds
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .flat_map(|line| {
+            line.split('|')
+                .nth(1)
+                .expect("the first column")
+                .split(',')
+                .map(|tag| tag.trim().trim_matches('`'))
+        })
+        .collect();
+    documented.sort_unstable();
+    assert_eq!(format!("\"{}\"", documented.join(" ")), expected);
+
+    // The tools, with the options the script gives them.
+    for (shown, run) in [
+        ("docker load --input ", "docker load --input \"$archive\""),
+        ("docker tag ", "docker tag \"$loaded\" \"$local_name\""),
+        ("docker push ", "docker push \"${local_names[$index]}\""),
+        (
+            "docker buildx imagetools create \\\n  --tag ",
+            "docker buildx imagetools create \"${tag_arguments[@]}\" \"${sources[@]}\"",
+        ),
+    ] {
+        assert!(document.contains(shown), "the document shows `{shown}`");
+        assert!(publish.contains(run), "the script runs `{run}`");
+    }
+    assert!(publish.contains("local_name=\"$image:$version-${platform/\\//-}\""));
+    assert!(publish.contains("sources+=(\"$image@$(digest_of "));
+
+    // Every registry in an example is the one for examples.
+    for line in document.lines() {
+        if let Some(position) = line.find("/butterbot") {
+            let host = line[..position]
+                .rsplit(|character: char| character.is_whitespace() || character == '`')
+                .next()
+                .expect("a word");
+            assert!(
+                host == "registry.example.com" || host == "<REGISTRY_HOST>",
+                "{line}"
+            );
+        }
+    }
 }

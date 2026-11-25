@@ -9,14 +9,14 @@
 
 ## 2. Publishing script and rehearsal
 
-- [ ] 2.1 Write the publishing script under `.github/scripts/` with its inputs (registry host, login, version, the two image archives) and the missing-setting check that names the missing one and prints no value; verify with a test that runs it once per missing setting and checks the message, the exit status and that no registry was contacted
-- [ ] 2.2 Add the rehearsal job to `ci.yml`: a throwaway registry with a login generated in the job, the two image artifacts of the run, a made-up version; verify that it runs without any repository secret and that the script can log in and push to it
-- [ ] 2.3 Implement pushing both platform images, creating the multi-platform image and setting the tags of a release, with the tags set last; verify in the rehearsal that `X.Y.Z`, `X.Y` and `latest` name one image listing exactly `linux/amd64` and `linux/arm64`, that pulling for each platform yields that platform's image, and that each published image has the identifier of the tested one
-- [ ] 2.4 Implement the pre-release rule; verify in the rehearsal that releasing `0.2.0-rc.1` after `0.1.0` sets only `0.2.0-rc.1` and leaves `latest` and `0.1` where they were
-- [ ] 2.5 Implement the check of an existing version; verify in the rehearsal that a different build of a released version is refused with nothing pushed, and that a second run with the same images completes and leaves the tags unchanged
-- [ ] 2.6 Verify in the rehearsal that a missing archive for one platform fails the script before any tag of the release is set or moved
-- [ ] 2.7 Write the version, the tags and the digest to the run summary, naming the image as `butterbot`, and expose the digest to later steps; verify in the rehearsal that the summary has all three, and that nothing the script itself writes contains the registry host it was given
-- [ ] 2.8 Document in `docs/releasing.md` what the publishing steps do and how the platform images reach the registry (per-platform tags or by digest); verify the text matches what the rehearsal observes
+- [x] 2.1 Write the publishing script under `.github/scripts/` with its inputs (registry host, login, version, the two image archives) and the missing-setting check that names the missing one and prints no value; verify with a test that runs it once per missing setting and checks the message, the exit status and that no registry was contacted
+- [x] 2.2 Add the rehearsal job to `ci.yml`: a throwaway registry with a login generated in the job, the two image artifacts of the run, a made-up version; verify that it runs without any repository secret and that the script can log in and push to it
+- [x] 2.3 Implement pushing both platform images, creating the multi-platform image and setting the tags of a release, with the tags set last; verify in the rehearsal that `X.Y.Z`, `X.Y` and `latest` name one image listing exactly `linux/amd64` and `linux/arm64`, that pulling for each platform yields that platform's image, and that each published image has the identifier of the tested one
+- [x] 2.4 Implement the pre-release rule; verify in the rehearsal that releasing `0.2.0-rc.1` after `0.1.0` sets only `0.2.0-rc.1` and leaves `latest` and `0.1` where they were
+- [x] 2.5 Implement the check of an existing version; verify in the rehearsal that a different build of a released version is refused with nothing pushed, and that a second run with the same images completes and leaves the tags unchanged
+- [x] 2.6 Verify in the rehearsal that a missing archive for one platform fails the script before any tag of the release is set or moved
+- [x] 2.7 Write the version, the tags and the digest to the run summary, naming the image as `butterbot`, and expose the digest to later steps; verify in the rehearsal that the summary has all three, and that nothing the script itself writes contains the registry host it was given
+- [x] 2.8 Document in `docs/releasing.md` what the publishing steps do and how the platform images reach the registry (per-platform tags or by digest); verify the text matches what the rehearsal observes
 
 ## 3. Release workflow
 

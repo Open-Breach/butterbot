@@ -69,6 +69,17 @@ For a version `X.Y.Z` a release SHALL set the tags `X.Y.Z`, `X.Y` and `latest`, 
 - **WHEN** the image of one platform is missing or cannot be pushed
 - **THEN** none of the release's tags is set or moved
 
+### Requirement: A platform's image may have a tag of its own
+To get the image of each platform into the registry, a release MAY first push it under a tag of its own: the full version followed by `-linux-amd64` or `-linux-arm64`. These are not tags of the release: they name the image of one platform, and nothing refers to them afterwards. A version that itself ends in `-linux-amd64` or `-linux-arm64` SHALL be refused before anything is pushed, because its tag would be such a tag of another version.
+
+#### Scenario: Tags of the platforms
+- **WHEN** version `0.1.0` is released
+- **THEN** the registry holds no tag for it other than `0.1.0`, `0.1`, `latest`, `0.1.0-linux-amd64` and `0.1.0-linux-arm64`
+
+#### Scenario: Version that ends like the tag of a platform's image
+- **WHEN** the version `0.1.0-linux-amd64` is given to the publishing steps
+- **THEN** they fail with a message saying so, before they log in to the registry
+
 ### Requirement: A released version is not overwritten
 Before pushing anything, a release SHALL fail when the registry already holds the tag of the full version and that tag names images other than the ones this release is about to publish. When it names exactly these images, the release SHALL continue, so that running a failed publishing job again completes the release.
 
@@ -103,7 +114,7 @@ No file in the repository, run summary, artifact or attestation SHALL contain th
 - **THEN** nothing they write themselves, apart from the output of the tools they call, contains that host
 
 ### Requirement: A missing registry setting stops the release
-When one of the three registry secrets is missing or empty, the publishing job SHALL fail in its first step with a message that names the missing secret, before it contacts a registry. It SHALL never print a secret's value.
+When one of the three registry secrets is missing or empty, the publishing job SHALL fail with a message that names the missing secret, before it contacts a registry. This check SHALL be the first of the publishing steps. It SHALL never print a secret's value.
 
 #### Scenario: Environment not set up
 - **WHEN** a release reaches the publishing job and `REGISTRY_PASSWORD` is not set

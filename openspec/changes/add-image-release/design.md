@@ -57,6 +57,7 @@ Each platform's `image` job saves the image it has tested (`docker save`) and up
 
 - This gives one job that reads the secrets, hence one approval, and it makes the published image the tested one.
 - The image is one static program, so the artifacts are small. Give them a short retention: seven days, which is long enough for a release that waits for its approval, and for running its publishing job again.
+- *As built:* "the image that was tested" is established by the image identifier, which is the digest of the image's configuration. It is the same in an archive, in a registry and after a pull. Docker's own image ID is not a substitute: Depot's runners use Docker's containerd image store, which shows the digest of the manifest instead. For the same reason the image is built with `--provenance=false`: that store keeps the build's attestation beside the image, and what is saved and pushed is then a list of manifests and not one image.
 - *Alternatives considered:* pushing from each platform job (the secrets in two jobs, the environment approved more than once, and a release half pushed when one platform fails); building both platforms again in the publishing job (an untested image, and emulation for one platform).
 
 ### D3. The release calls the CI workflow
@@ -99,6 +100,7 @@ Notes for the implementation:
 - The script never echoes the host or the login, never runs with command tracing (`set -x`), and never transforms the host (no encoding, no splitting), because only the exact secret value is masked.
 - The summary and the attestation name the image as `butterbot`.
 - How the two platform images get into the registry before the tags are set is the implementer's choice. Pushing them under per-platform tags such as `0.1.0-linux-amd64` is acceptable; pushing by digest without a tag is tidier if the tools at hand do it reliably. Record the choice in `docs/releasing.md`.
+- *As built:* per-platform tags, `X.Y.Z-linux-amd64` and `X.Y.Z-linux-arm64`, pushed with `docker push`; the multi-platform image is then created with `docker buildx imagetools create` from the two manifests by digest. `docker push` cannot push without a tag, and a push by digest would need another tool in the job that holds the login. The spec gained a requirement for these tags, and a version that ends like one is refused.
 - Use only what every OCI registry offers: pushing images, pushing an image index, reading manifests. Do not rely on a referrers API or on registry-specific features.
 - Check the current documentation of the tools used (Docker's `buildx imagetools`, or whichever tool is chosen) before relying on a flag. Versions and flags named here are a snapshot.
 
