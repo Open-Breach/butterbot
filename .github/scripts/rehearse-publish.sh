@@ -161,16 +161,19 @@ id_arm64="$("$scripts/image-id.sh" "$arm64")"
 echo "The tested images: linux/amd64 $id_amd64, linux/arm64 $id_arm64."
 
 # Another build of the image for the platform of this machine: the tested
-# one with a label added, which gives it another identifier.
+# one with a label added, which gives it another identifier. It is built
+# with the options the image job builds with, so that its manifest is of the
+# same kind.
 case "$(docker version --format '{{.Server.Arch}}')" in
   amd64) native="$amd64" ;;
   arm64 | aarch64) native="$arm64" ;;
   *) echo "the rehearsal runs on amd64 or arm64" >&2; exit 1 ;;
 esac
 loaded="$(docker load --input "$native" | sed -n 's/^Loaded image\( ID\)\{0,1\}: //p' | tail -n 1)"
-changed="$(docker create "$loaded")"
-docker commit --change 'LABEL rehearsal="another build"' "$changed" "$other_image" > /dev/null
-docker rm "$changed" > /dev/null
+mkdir "$work/another-build"
+printf 'FROM %s\nLABEL rehearsal="another build"\n' "$loaded" > "$work/another-build/Dockerfile"
+docker build --provenance=false --output type=docker,oci-mediatypes=false --quiet \
+  --tag "$other_image" "$work/another-build" > /dev/null
 docker save --output "$work/another-build.tar" "$other_image"
 other_amd64="$amd64"
 other_arm64="$arm64"
@@ -259,6 +262,19 @@ same "0.1 still names 0.1.0" "$(digest 0.1)" "$released"
 check "the summary shows only the tag of the pre-release" grep --quiet --fixed-strings '| Tags | `0.2.0-rc.1` |' "$out/summary.md"
 
 echo
+echo "\"Release\": a second release, 0.2.0 after 0.1.0, from another build"
+succeeds 0.2.0 "$other_amd64" "$other_arm64"
+same "the tags of 0.2.0 were added" "$(tags)" "0.1 0.1.0 0.1.0-linux-amd64 0.1.0-linux-arm64 0.2 0.2.0 0.2.0-linux-amd64 0.2.0-linux-arm64 0.2.0-rc.1 0.2.0-rc.1-linux-amd64 0.2.0-rc.1-linux-arm64 latest"
+second="$(digest 0.2.0)"
+check "0.2.0 names another image than 0.1.0" test -n "$second" -a "$second" != "$released"
+same "0.2 names 0.2.0" "$(digest 0.2)" "$second"
+same "latest has moved to 0.2.0" "$(digest latest)" "$second"
+same "0.1 and 0.1.0 still name 0.1.0" "$(digest 0.1) $(digest 0.1.0)" "$released $released"
+same "0.2.0 lists exactly two platforms" "$(platforms 0.2.0)" "linux/amd64 linux/arm64"
+same "0.2.0 yields the other build for linux/amd64" "$(identifier 0.2.0 linux/amd64)" "$other_id_amd64"
+same "0.2.0 yields the other build for linux/arm64" "$(identifier 0.2.0 linux/arm64)" "$other_id_arm64"
+
+echo
 echo "\"One platform is missing\": the second image cannot be pushed"
 before="$(state)"
 mkdir "$work/bin"
@@ -275,18 +291,53 @@ SHIM
 chmod +x "$work/bin/docker"
 PATH="$work/bin:$PATH" fails 0.3.0 "$other_amd64" "$other_arm64"
 says "the image for linux/arm64 could not be pushed"
-same "only the first platform's own tag was added" "$(tags)" "0.1 0.1.0 0.1.0-linux-amd64 0.1.0-linux-arm64 0.2.0-rc.1 0.2.0-rc.1-linux-amd64 0.2.0-rc.1-linux-arm64 0.3.0-linux-amd64 latest"
-same "latest and 0.1 were not moved" "$(digest latest) $(digest 0.1)" "$released $released"
+same "only the first platform's own tag was added" "$(tags)" "0.1 0.1.0 0.1.0-linux-amd64 0.1.0-linux-arm64 0.2 0.2.0 0.2.0-linux-amd64 0.2.0-linux-arm64 0.2.0-rc.1 0.2.0-rc.1-linux-amd64 0.2.0-rc.1-linux-arm64 0.3.0-linux-amd64 latest"
+same "latest and 0.2 were not moved" "$(digest latest) $(digest 0.2)" "$second $second"
 same "no tag of 0.3.0 was set" "$(digest 0.3.0)$(digest 0.3)" ""
 
 echo
-echo "\"Environment not set up\": a login the registry does not know"
+echo "\"Version already released from another build\": the registry cannot say whether the version exists"
+before="$(state)"
+cat > "$work/bin/docker" << SHIM
+#!/usr/bin/env bash
+# The rehearsal's stand-in for a registry that answers with an error.
+if [ "\${1:-} \${2:-} \${3:-} \${4:-}" = "buildx imagetools inspect --raw" ] && [[ "\${5:-}" == *:0.5.0 ]]; then
+  echo "ERROR: unexpected status from the rehearsal: 500 Internal Server Error" >&2
+  exit 1
+fi
+exec "$real_docker" "\$@"
+SHIM
+PATH="$work/bin:$PATH" fails 0.5.0 "$amd64" "$arm64"
+says "the registry did not say whether version 0.5.0 exists"
+same "nothing was pushed" "$(state)" "$before"
+
+echo
+echo "A tag that holds a manifest of another kind (not a scenario of its own: no tag of the release may be set)"
+# What `latest` holds, put there again with the media type of the other
+# kind. A registry may refuse to replace such a manifest, and the tool would
+# find that out only after it has set the tag of the full version.
+held="$(manifest latest)"
+case "$(jq --raw-output '.mediaType' <<< "$held")" in
+  application/vnd.docker.*) other_kind="application/vnd.oci.image.index.v1+json" ;;
+  *) other_kind="application/vnd.docker.distribution.manifest.list.v2+json" ;;
+esac
+jq --compact-output --arg type "$other_kind" '.mediaType = $type' <<< "$held" > "$work/other-kind.json"
+same "the registry takes latest as a manifest of the other kind" \
+  "$(curl --silent --output /dev/null --write-out '%{http_code}' --user "$user:$password" --request PUT \
+    --header "Content-Type: $other_kind" --data-binary "@$work/other-kind.json" "$api/butterbot/manifests/latest")" "201"
+before="$(state)"
+fails 0.4.0 "$amd64" "$arm64"
+says "the tag latest holds a manifest of another kind"
+same "no tag of 0.4.0 was set, and latest was not moved" "$(digest 0.4.0)$(digest 0.4) $(digest latest)" " $(sed -n 's/^latest=//p' <<< "$before")"
+
+echo
+echo "A login the registry does not know (not a scenario of its own: nothing may be pushed)"
 status=0
 REGISTRY_HOST="$host" REGISTRY_USERNAME="$user" REGISTRY_PASSWORD="not-the-password" \
-  "$scripts/publish-image.sh" 0.4.0 "$amd64" "$arm64" > "$work/wrong-login.log" 2>&1 3> /dev/null || status=$?
+  "$scripts/publish-image.sh" 0.6.0 "$amd64" "$arm64" > "$work/wrong-login.log" 2>&1 3> /dev/null || status=$?
 same "the publishing steps fail" "$status" "1"
 check "the message says that the login was refused" grep --quiet --fixed-strings "the registry refused the login" "$work/wrong-login.log"
-same "no tag of 0.4.0 was set" "$(digest 0.4.0)" ""
+same "no tag of 0.6.0 was set" "$(digest 0.6.0)" ""
 
 echo
 if [ "$failures" -ne 0 ]; then

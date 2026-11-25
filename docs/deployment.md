@@ -257,6 +257,8 @@ What has been checked, and how:
 | The webhook notifier: the request for every setting, retries, redirects, an endpoint with a private certificate authority, a full run with a failed certificate, and `butterbot notify test` | Automated tests against a test server on the same machine. They run on every change. | Pass |
 | The body for Microsoft Teams (`format = "teams"`) | Compared with Microsoft's documentation of the workflow trigger "When a Teams webhook request is received", as it was on 24 November 2026. | Pass |
 | A test event reaches a Teams workflow | The owner sent a sample with `butterbot notify test` to a real workflow on 24 November 2026; see below. | Pass |
+| The publishing steps of a release: the tags of a release and of a pre-release, both platforms under one name, the published image being the tested one, another build of a released version, a repeated run, a missing platform, a refused login | A rehearsal against a registry that exists only for the run and requires a login, with the two images the same run has tested; see [Releasing](releasing.md). It runs on every change, and so does the same rehearsal with a rule of the publishing steps taken out, which must fail. | Pass |
+| The checks of a release tag, and a missing registry setting | Automated tests: the tag check in temporary repositories, the publishing script with a stand-in for Docker. They run on every change. | Pass |
 
 ### Runs against real services, 24 November 2026
 
@@ -309,3 +311,4 @@ These parts of the end-to-end check have not been run, or their result was not r
 | The same against the staging server of Let's Encrypt, with a test vault | a test entry of its own, as in step 4 of the cutover | not yet run |
 | A real failure reaches the Teams workflow that received the test event | `butterbot run --only <entry that fails>`, for example an entry whose DNS provider has no credential | not yet run |
 | Teams shows names such as `*.example.com` and `_acme-challenge.example.com` as they are, and not as emphasis | The events of a real run for a wildcard certificate: the `names` of a `renewed` event, or the reason of a failed validation. The samples of `butterbot notify test` contain no such name. | not yet run |
+| A release reaches the registry: the run waits for the approval, the log shows the registry masked, the registry holds the tags with the digest from the summary, the attestation verifies, and the image pulls on the platform of the cluster | Push a version tag and approve; then the checks under "After a release" in [Releasing](releasing.md) | not yet run |

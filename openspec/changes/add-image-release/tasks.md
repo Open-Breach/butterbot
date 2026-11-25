@@ -33,7 +33,7 @@
 
 ## 5. Checks
 
-- [ ] 5.1 Run `openspec validate add-image-release --strict` and confirm that every scenario of the spec has a test or is listed as checked by the owner at the first release; verify by listing the scenario-to-test mapping in the pull request description
+- [x] 5.1 Run `openspec validate add-image-release --strict` and confirm that every scenario of the spec has a test or is listed as checked by the owner at the first release; verify by listing the scenario-to-test mapping in the pull request description
 - [ ] 5.2 Set up the environment `release` (required reviewer, only tags matching `v*`, the three secrets) and a login for the pipeline at the registry; verify that the environment's page shows the reviewer, the rule and three secrets (the owner does this; nothing about it is written into the repository)
 - [ ] 5.3 Cut the first release: push the version tag, approve, then check that the run's log shows the registry masked, that the registry holds the tags with the digest from the summary, that `gh attestation verify` succeeds, and that the image pulls on the cluster's platform; verify by adding a row to the "Verified against" table in `docs/deployment.md` that does not name the registry (the owner does this)
 

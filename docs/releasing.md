@@ -148,6 +148,8 @@ Nothing is published before the job `publish`, so a release that fails in `verif
 | `publish`, a secret is missing | Add it to the environment and run the failed job again. |
 | `publish`, the login is refused | Correct the secrets, or the login at the registry, and run the failed job again. |
 | `publish`, after something was pushed | Run the failed job again. It publishes the same two images, finds what is already there and completes the rest. This also holds when the tags are set and the attestation failed. |
+| `publish`, the registry does not say whether the version exists | Read the tool's output above the message. If the registry answers with an error for an image that does not exist yet, which can happen at the very first release, create the image's repository `butterbot` in the registry and run the failed job again. The publishing steps take only "not found" for "not there". |
+| `publish`, `X.Y` or `latest` holds a manifest of another kind | The message names the tag. Delete that tag in the registry and run the failed job again; see [The kind of a manifest](#the-kind-of-a-manifest). No tag of the release was set before the job stopped. |
 | `publish`, the version exists with other images | The registry holds this version from another build. A released version is not overwritten. Release the next version, or delete the tags of this version in the registry (`0.1.0`, `0.1.0-linux-amd64`, `0.1.0-linux-arm64`) and run the failed job again. |
 
 To run the failed job again, choose "Re-run failed jobs" on the run, or:
@@ -178,7 +180,7 @@ In order:
 3. **Read the two images.** The script reads each archive's image identifier and platform from the archive, and loads the archive into Docker. If an archive is missing, or holds an image for the wrong platform, it stops. Nothing has been pushed at this point.
 4. **Check whether the version exists.** If the registry already holds the tag of the full version, the script compares the images that tag names with the two it was given. Other images: it stops, and the registry is unchanged. The same images: it goes on, so that a publishing job that failed half way can be run again.
 5. **Push the image of each platform**, and check that the registry then holds the image with the identifier from the archive.
-6. **Create the multi-platform image and set the tags.** This is the last change to the registry, and the only one that sets or moves a tag of the release.
+6. **Create the multi-platform image and set the tags.** This is the last change to the registry, and the only one that sets or moves a tag of the release. Before it, the script looks at what `X.Y` and `latest` hold now; see [The kind of a manifest](#the-kind-of-a-manifest).
 7. **Report.** The version, the tags and the digest of the multi-platform image go to the summary of the run. The digest is also an output of the step (`digest`), for the steps after it.
 
 The **image identifier** is the digest of the image's configuration. It is the same in the archive, in the registry and on a machine that has pulled the image, whatever the tools in between do to the layers. It is how the script knows that the image in the registry is the image that was tested.
@@ -200,7 +202,9 @@ When something goes wrong:
 | The login is refused | Exit code 1. Nothing was pushed. |
 | An archive is missing, or is for the wrong platform | Exit code 1. Nothing was pushed. |
 | The version is in the registry with other images | Exit code 1. Nothing was pushed. Delete the tags of that version in the registry, or release the next version. |
+| The registry does not say whether the version exists | Exit code 1. Nothing was pushed. Only an answer that says "not found" counts as "not there"; an error does not. |
 | The image of the second platform cannot be pushed | Exit code 1. The first platform's image is in the registry under its own tag. No tag of the release was set or moved. |
+| `X.Y` or `latest` holds a manifest of another kind than this release has | Exit code 1. No tag of the release was set or moved. See [The kind of a manifest](#the-kind-of-a-manifest). |
 | The tags cannot be set, or only some of them | Exit code 1. Run the script again with the same archives: it completes what is missing. |
 
 The script never prints the host, the user or the password, and it does not run with command tracing. What the tools it calls print is another matter: `docker push` names the repository it pushes to. In a workflow the three values are secrets, and GitHub masks a secret wherever its exact value appears in the log. The script hands the host to the tools as it is, without changing it, so that the masking applies.
@@ -234,6 +238,15 @@ The per-platform tags are not tags of the release, and nothing refers to them af
 
 A version that ends in `-linux-amd64` or `-linux-arm64` is refused, because its tag would be the per-platform tag of another version.
 
+### The kind of a manifest
+
+A manifest is written with Docker's media types or with the OCI ones. Which of the two a build writes depends on the version of the builder and on Docker's image store, so it can change when a runner is updated. That matters for the tags a release moves, `X.Y` and `latest`: a registry may refuse to replace a manifest of one kind by a manifest of the other. The registry of the rehearsal does, with "400 Bad Request", and the tool finds out only after it has set the tag of the full version.
+
+Two things keep a release clear of that:
+
+- The `image` jobs build with `--output type=docker,oci-mediatypes=false`, so the images have Docker's media types whatever builds them. Every combination of builder and image store can write those.
+- Before it sets any tag, the script compares the kind of what `X.Y` and `latest` hold with the kind of the release. If they differ it stops, with no tag set or moved, and names the tag. Delete that tag in the registry and run the publishing job again: the job then sets it anew. Until then the tag is gone, so do this when nothing pulls it.
+
 ## What the registry holds afterwards
 
 After `0.1.0` and then `0.2.0-rc.1`:
@@ -260,7 +273,10 @@ What it checks:
 - A second run with the same images completes and leaves every tag where it was.
 - Another build of `0.1.0` is refused, and the registry is unchanged.
 - `0.2.0-rc.1` after `0.1.0` sets only its own tag; `latest` and `0.1` still name `0.1.0`.
+- `0.2.0` after that sets `0.2.0` and `0.2` and moves `latest`; `0.1` and `0.1.0` still name `0.1.0`.
+- When `latest` holds a manifest of the other kind, the script stops before it sets a tag.
 - With one archive missing, nothing reaches the registry. With a push of the second platform that fails, no tag of the release is set or moved.
+- When the registry answers the question for the version with an error, the script stops and nothing is pushed.
 - A login the registry does not know stops the script, and nothing is pushed.
 
 What it cannot check: HTTPS to a real registry, the real login, the approval of the environment and the attestation. They are exercised for the first time by the first release. The rehearsal's registry speaks plain HTTP on `localhost`, which Docker and `buildx` accept for that name without being told.
@@ -268,9 +284,9 @@ What it cannot check: HTTPS to a real registry, the real login, the approval of 
 To run it on a Linux machine with Docker, `curl`, `jq` and `htpasswd`:
 
 ```
-docker build --provenance=false --platform linux/amd64 --tag butterbot:dev . && docker save --output amd64.tar butterbot:dev
-docker build --provenance=false --platform linux/arm64 --tag butterbot:dev . && docker save --output arm64.tar butterbot:dev
+docker build --provenance=false --output type=docker,oci-mediatypes=false --platform linux/amd64 --tag butterbot:dev . && docker save --output amd64.tar butterbot:dev
+docker build --provenance=false --output type=docker,oci-mediatypes=false --platform linux/arm64 --tag butterbot:dev . && docker save --output arm64.tar butterbot:dev
 .github/scripts/rehearse-publish.sh amd64.tar arm64.tar
 ```
 
-`--provenance=false` keeps the image one image. Without it, Docker's containerd image store attaches an attestation to the build, and what is saved and pushed is a list of manifests; the publishing steps refuse that. Building the platform that is not the machine's own needs emulation and is slow; the CI workflow builds each on a machine of its platform.
+These are the options the `image` jobs build with. `--provenance=false` keeps the image one image: without it, Docker's containerd image store attaches an attestation to the build, and what is saved and pushed is a list of manifests, which the publishing steps refuse. `--output type=docker,oci-mediatypes=false` fixes the kind of the manifest, as described above. Building the platform that is not the machine's own needs emulation and is slow; the CI workflow builds each on a machine of its platform.

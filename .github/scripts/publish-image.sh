@@ -102,9 +102,10 @@ finish() {
 trap finish EXIT
 
 # The manifest the registry holds under a reference, as the registry sent
-# it. Returns 1 when the registry has no such manifest, and fails when the
-# registry could not be asked: an answer that was not understood must never
-# be taken for "not there".
+# it. Returns 1 when the registry has no such manifest, and 2 when the
+# registry could not be asked. The two must never be confused: an answer
+# that was not understood is not "not there". The callers run this in a
+# command substitution, so it returns a status and does not exit.
 manifest_of() {
   if docker buildx imagetools inspect --raw "$1" 2> "$work/inspect-error"; then
     return 0
@@ -113,7 +114,7 @@ manifest_of() {
   if grep -q -i 'not found' "$work/inspect-error"; then
     return 1
   fi
-  fail "the registry did not answer the question for a manifest; see the output of the tool above"
+  return 2
 }
 
 # The digest of the manifest the registry holds under a reference.
@@ -130,10 +131,20 @@ images_of() {
     printf 'a single image %s\n' "$(jq --raw-output '.config.digest' <<< "$manifest")"
     return 0
   fi
+  # An image whose manifest cannot be read gets no identifier, and then
+  # equals none.
   jq --raw-output '.manifests[] | "\(.platform.os)/\(.platform.architecture) \(.digest)"' <<< "$manifest" \
     | while read -r platform digest; do
       printf '%s %s\n' "$platform" "$(manifest_of "$image@$digest" | jq --raw-output '.config.digest')"
     done | sort
+}
+
+# The kind of a manifest, by its media type: Docker's or OCI's.
+kind_of() {
+  case "$(jq --raw-output '.mediaType // ""' <<< "$1")" in
+    application/vnd.docker.*) echo "Docker" ;;
+    *) echo "OCI" ;;
+  esac
 }
 
 # 2. Log in.
@@ -163,12 +174,13 @@ for index in 0 1; do
   fi
   # `docker load` says which name or ID the image has now. Two archives may
   # carry the same name, so the image gets a name of its own at once.
-  loaded="$(docker load --input "$archive" 2>&3 | tee /dev/fd/3 | sed -n 's/^Loaded image\( ID\)\{0,1\}: //p' | tail -n 1)"
+  loaded="$(docker load --input "$archive" 2>&3 | tee /dev/fd/3 | sed -n 's/^Loaded image\( ID\)\{0,1\}: //p' | tail -n 1)" || loaded=""
   if [ -z "$loaded" ]; then
     fail "the archive for $platform could not be loaded. Nothing was pushed."
   fi
   local_name="$image:$version-${platform/\//-}"
-  docker tag "$loaded" "$local_name" >&3 2>&3
+  docker tag "$loaded" "$local_name" >&3 2>&3 \
+    || fail "the image for $platform could not be named after it was loaded. Nothing was pushed."
   identifiers+=("$identifier")
   local_names+=("$local_name")
   expected+="$platform $identifier"$'\n'
@@ -178,17 +190,26 @@ expected="$(printf '%s' "$expected" | sort)"
 
 # 4. A released version is not overwritten. The same images are let through,
 # so that a publishing job that failed half way can be run again.
-if existing="$(manifest_of "$image:$version")"; then
-  if [ "$(images_of "$existing")" != "$expected" ]; then
-    fail "version $version exists in the registry already, and its tag names other images than the ones of this run. Nothing was pushed. Delete the tags of $version in the registry, or release the next version."
-  fi
-  say "Version $version is in the registry already, with exactly these images. Completing it."
-else
-  say "Version $version is not in the registry yet."
-fi
+asked=0
+existing="$(manifest_of "$image:$version")" || asked=$?
+case "$asked" in
+  0)
+    if [ "$(images_of "$existing")" != "$expected" ]; then
+      fail "version $version exists in the registry already, and its tag names other images than the ones of this run. Nothing was pushed. Delete the tags of $version in the registry, or release the next version."
+    fi
+    say "Version $version is in the registry already, with exactly these images. Completing it."
+    ;;
+  1)
+    say "Version $version is not in the registry yet."
+    ;;
+  *)
+    fail "the registry did not say whether version $version exists; see the output of the tool above. Nothing was pushed."
+    ;;
+esac
 
 # 5. The image of each platform, under a tag of its own.
 sources=()
+kind="Docker"
 for index in 0 1; do
   platform="${platforms[$index]}"
   say "Pushing the image for $platform as $name:${local_names[$index]##*:}."
@@ -202,10 +223,38 @@ for index in 0 1; do
   if [ "$(jq --raw-output '.config.digest' <<< "$pushed")" != "${identifiers[$index]}" ]; then
     fail "the registry holds another image for $platform than the one that was tested. No tag of the release was set or moved."
   fi
-  sources+=("$image@$(digest_of "${local_names[$index]}")")
+  # A list of two Docker manifests is a Docker manifest list; with an OCI
+  # manifest among them it is an OCI index.
+  if [ "$(kind_of "$pushed")" != "Docker" ]; then
+    kind="OCI"
+  fi
+  manifest_digest="$(digest_of "${local_names[$index]}")" || manifest_digest=""
+  case "$manifest_digest" in
+    sha256:*) sources+=("$image@$manifest_digest") ;;
+    *) fail "the registry did not give the digest of the image for $platform. No tag of the release was set or moved." ;;
+  esac
 done
 
 # 6. The multi-platform image, and the tags. They are set last.
+#
+# First the tags that this release moves, `X.Y` and `latest`: a registry may
+# refuse to replace a manifest of one kind (Docker's media types, or OCI's)
+# by one of the other, and the tool then fails after it has set the tag of
+# the full version. Better to stop before any tag is set, and to say why.
+for tag in "${tags[@]:1}"; do
+  asked=0
+  held="$(manifest_of "$image:$tag")" || asked=$?
+  case "$asked" in
+    0)
+      if [ "$(kind_of "$held")" != "$kind" ]; then
+        fail "the tag $tag holds a manifest of another kind than this release would put there: $(kind_of "$held") media types, and this release has $kind media types. A registry may refuse to replace one by the other. No tag of the release was set or moved. Delete the tag $tag in the registry and run the job again; see docs/releasing.md."
+      fi
+      ;;
+    1) ;;
+    *) fail "the registry did not say what the tag $tag holds; see the output of the tool above. No tag of the release was set or moved." ;;
+  esac
+done
+
 say "Setting the tags: ${tags[*]}."
 tag_arguments=()
 for tag in "${tags[@]}"; do
@@ -214,13 +263,17 @@ done
 docker buildx imagetools create "${tag_arguments[@]}" "${sources[@]}" >&3 2>&3 \
   || fail "the tags could not be set. Run the job again to complete the release."
 
-digest="$(digest_of "$image:$version")"
+digest="$(digest_of "$image:$version")" || digest=""
+case "$digest" in
+  sha256:*) ;;
+  *) fail "the registry did not give the digest of the tag $version after it was set. Run the job again to complete the release." ;;
+esac
 for tag in "${tags[@]}"; do
   if [ "$(digest_of "$image:$tag")" != "$digest" ]; then
     fail "the tag $tag does not name the image of version $version"
   fi
 done
-published="$(manifest_of "$image:$version")"
+published="$(manifest_of "$image:$version")" || published="{}"
 if [ "$(images_of "$published")" != "$expected" ]; then
   fail "the tag $version does not name exactly the two tested images"
 fi
