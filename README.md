@@ -32,7 +32,7 @@ It has been tested against an ACME test server. It has not yet run against a pub
 
 Butterbot is a console application, and it is built from source. With a [Rust toolchain](https://rustup.rs), in a copy of this repository:
 
-```sh
+```
 cargo build --release
 ```
 

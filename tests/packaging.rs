@@ -1176,7 +1176,10 @@ fn readme_says_that_the_program_is_built_from_source_and_no_image_is_published()
         getting.contains("Butterbot is a console application, and it is built from source."),
         "{getting}"
     );
-    assert_eq!(blocks(getting, "sh"), ["cargo build --release\n"]);
+    assert!(
+        getting.contains("\n```\ncargo build --release\n```\n"),
+        "{getting}"
+    );
     assert!(
         getting.contains("The project publishes no container image, and no prebuilt program."),
         "{getting}"
