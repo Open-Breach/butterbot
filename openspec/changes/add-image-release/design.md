@@ -80,6 +80,7 @@ on: push of a tag v*
 - `publish` is the only job with `environment: release`, and the only one with the permissions an attestation needs (`id-token: write`, `attestations: write`). Everything else keeps `contents: read`.
 - The workflow has a concurrency group, so that two releases never publish at the same time and `latest` cannot end up on the older one.
 - A tag pattern in the workflow cannot express a semantic version exactly. The pattern admits `v*`; `verify` rejects anything that is not `v<semantic version>`.
+- *As built:* `verify` also refuses a version with build metadata (`v0.1.0+build.5`), because an image tag cannot contain `+`, and it reports a differing version and a commit outside `main` each with a message of its own, both when both apply. The spec says so since this change was implemented.
 
 ### D5. The publishing steps are one script, shared with the rehearsal
 
@@ -117,6 +118,7 @@ After the script, the publishing job records a build provenance attestation for 
 - Attestations of a public repository are signed through the public Sigstore instance and written to a public transparency log. The fully qualified image name would put the registry's host into that log for good, so the subject name is the bare image name.
 - The owner verifies with the GitHub command line tool against the image in the registry (`gh attestation verify oci://<image> --repo <owner>/butterbot`); the tool finds the attestation by the image's digest.
 - Check the action's current documentation for the input names and for which action is current (`actions/attest`, or `actions/attest-build-provenance`, which now wraps it).
+- *As built (documentation read on 2026-11-24):* `actions/attest` v4.2.2, which `actions/attest-build-provenance` now wraps, with `subject-name: butterbot`, `subject-digest` from the publishing step and `push-to-registry: false`. With these inputs the statement names the subject as `butterbot` with its digest; the predicate describes the workflow run. The job asks for `id-token: write` and `attestations: write`. It does not ask for `artifact-metadata: write`, which the action needs only for a storage record, and it writes one only when the attestation is pushed to a registry. The host appears only on the owner's own command line when he verifies.
 - **If it turns out that the attestation cannot be made or verified without the registry's host in it, leave the attestation step out, leave its tasks open, and report.** Do not put the host into an attestation.
 
 ### D8. The rehearsal

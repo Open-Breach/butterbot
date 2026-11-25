@@ -1,0 +1,105 @@
+name: Release
+
+# Publishes the container image of a version to a private registry.
+#
+# A release starts when a tag that begins with `v` is pushed, and with
+# nothing else. Three jobs, in this order:
+#
+#   verify   the tag is v<semantic version>, the version is the program's,
+#            and the tagged commit is contained in main
+#   checks   everything that runs for a change (ci.yml), on the tagged commit
+#   publish  the two images the container tests of `checks` ran against,
+#            as one multi-platform image, and an attestation for it
+#
+# The registry is named nowhere in this repository. Its host and the login
+# are the secrets REGISTRY_HOST, REGISTRY_USERNAME and REGISTRY_PASSWORD of
+# the deployment environment `release`. `publish` is the only job that
+# refers to that environment, so it is the only one that can read them, and
+# with a required reviewer on the environment it waits for one approval,
+# given with the results of the checks in view. docs/releasing.md has the
+# set-up.
+#
+# Runners: as in ci.yml, Depot's for Open-Breach and GitHub's own for any
+# other owner.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# One release at a time: two must never publish side by side, or `latest`
+# could end up on the older one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ${{ github.repository_owner == 'Open-Breach' && 'depot-ubuntu-24.04' || 'ubuntu-24.04' }}
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      # The whole history: the tagged commit is looked for in main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Cargo says which version the program has.
+      - name: Install the Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Check the tag
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: .github/scripts/check-release-tag.sh "$TAG"
+
+  checks:
+    name: checks
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: publish
+    needs: [verify, checks]
+    runs-on: ${{ github.repository_owner == 'Open-Breach' && 'depot-ubuntu-24.04' || 'ubuntu-24.04' }}
+    environment: release
+    permissions:
+      contents: read
+      # For the attestation: a signing certificate for this run, and the
+      # right to store the attestation with the repository.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The images the container tests of this run ran against.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-linux-*
+          path: ${{ runner.temp }}/images
+          merge-multiple: true
+      # The first thing the script does is to check the three settings.
+      - name: Publish the image
+        id: publish
+        env:
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          .github/scripts/publish-image.sh "$VERSION" \
+            "$RUNNER_TEMP/images/image-linux-amd64.tar" \
+            "$RUNNER_TEMP/images/image-linux-arm64.tar"
+      # Build provenance for the multi-platform image, kept with GitHub and
+      # not pushed to the registry. Attestations of a public repository go
+      # to a public log, so the subject is the bare name of the image: the
+      # registry's host must never be part of it.
+      - name: Attest the image
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: butterbot
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: false

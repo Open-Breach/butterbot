@@ -337,12 +337,14 @@ fn every_job_runs_on_depot_for_open_breach_and_on_github_otherwise() {
     const ARM64: Labels = ("depot-ubuntu-24.04-arm-4", "ubuntu-24.04-arm");
     const SMALL: Labels = ("depot-ubuntu-24.04", "ubuntu-24.04");
     // Which runners each job gets. A new job is added here.
-    let sizes: [(&str, &str, &[Labels]); 5] = [
+    let sizes: [(&str, &str, &[Labels]); 7] = [
         ("ci.yml", "check", &[AMD64]),
         ("ci.yml", "image", &[AMD64, ARM64]),
         ("ci.yml", "rehearsal", &[SMALL]),
         ("ci.yml", "workflows", &[SMALL]),
         ("ci.yml", "manifest", &[SMALL]),
+        ("release.yml", "verify", &[SMALL]),
+        ("release.yml", "publish", &[SMALL]),
     ];
     let mut seen = 0;
     for (file, workflow) in workflows() {
@@ -666,17 +668,486 @@ fn releasing_document_matches_the_rehearsal_and_the_publishing_steps() {
     assert!(publish.contains("local_name=\"$image:$version-${platform/\\//-}\""));
     assert!(publish.contains("sources+=(\"$image@$(digest_of "));
 
-    // Every registry in an example is the one for examples.
+    assert_every_registry_is_the_one_for_examples(&document);
+}
+
+/// Every registry that a document names is `registry.example.com`.
+fn assert_every_registry_is_the_one_for_examples(document: &str) {
+    let mut named = 0;
     for line in document.lines() {
-        if let Some(position) = line.find("/butterbot") {
+        for (position, _) in line.match_indices("/butterbot") {
             let host = line[..position]
                 .rsplit(|character: char| character.is_whitespace() || character == '`')
                 .next()
                 .expect("a word");
+            let host = host.strip_prefix("oci://").unwrap_or(host);
+            if host.ends_with("Open-Breach") {
+                // The repository, not an image.
+                continue;
+            }
             assert!(
                 host == "registry.example.com" || host == "<REGISTRY_HOST>",
                 "{line}"
             );
+            named += 1;
+        }
+        if let Some(position) = line.find("docker login ") {
+            assert_eq!(
+                line[position..].trim_end(),
+                "docker login registry.example.com",
+                "{line}"
+            );
+        }
+        for scheme in ["https://", "http://"] {
+            assert!(
+                !line.contains(scheme) || line.contains("no `https://`"),
+                "an address in {line}"
+            );
         }
     }
+    assert!(named > 0, "the search finds the image where it is named");
+}
+
+// Task 3.5: docs/releasing.md covers cutting a release, the set-up outside
+// the repository, verifying the attestation and a release that fails half
+// way. Its commands are spelled as the tools accept them: each one below
+// was checked against the tool's own help (git 2, gh 2.105, Docker 29 with
+// buildx 0.39) on 2026-11-24.
+#[test]
+fn releasing_document_covers_a_release_from_the_tag_to_the_checks_afterwards() {
+    let document = repository_file("docs/releasing.md");
+    for section in [
+        "## Cutting a release",
+        "## What the workflow does",
+        "## Set-up outside the repository",
+        "## After a release",
+        "## When a release fails",
+    ] {
+        assert!(document.contains(&format!("\n{section}\n")), "{section}");
+    }
+    for command in [
+        "git tag v0.1.0\n",
+        "git push origin v0.1.0\n",
+        "gh run list --workflow release.yml\n",
+        "gh run watch <run id>\n",
+        "gh run rerun <run id> --failed\n",
+        "`git tag --delete v0.1.0`",
+        "`git push --delete origin v0.1.0`",
+        "docker login registry.example.com\n",
+        "docker buildx imagetools inspect registry.example.com/butterbot:0.1.0\n",
+        "gh attestation verify oci://registry.example.com/butterbot:0.1.0 --repo Open-Breach/butterbot\n",
+        "  --signer-workflow Open-Breach/butterbot/.github/workflows/release.yml \\\n",
+        "  --source-ref refs/tags/v0.1.0\n",
+        "gh api repos/Open-Breach/butterbot/attestations/sha256:<digest>\n",
+        "docker pull registry.example.com/butterbot:0.1.0\n",
+        "docker run --rm registry.example.com/butterbot:0.1.0 --version\n",
+    ] {
+        assert!(document.contains(command), "{command}");
+    }
+
+    // The set-up names what the workflow refers to.
+    let release = workflow("release.yml");
+    let environment = release["jobs"]["publish"]["environment"]
+        .as_str()
+        .expect("an environment");
+    assert!(document.contains(&format!("an environment named `{environment}`")));
+    for secret in ["REGISTRY_HOST", "REGISTRY_USERNAME", "REGISTRY_PASSWORD"] {
+        assert!(document.contains(&format!("| `{secret}` |")), "{secret}");
+    }
+    let pattern = release["on"]["push"]["tags"][0]
+        .as_str()
+        .expect("a pattern");
+    assert!(document.contains(&format!("one rule for tags, `{pattern}`")));
+    assert!(document.contains("**Required reviewers**"));
+    assert!(document.contains("**Prevent self-review**: off"));
+    assert!(document.contains("**A login for the pipeline.**"));
+    // The jobs of the workflow, as the document's table has them.
+    for (name, _) in jobs(&release) {
+        assert!(document.contains(&format!("\n| `{name}` | ")), "{name}");
+    }
+    // How long the images of a run are kept.
+    let days = workflow("ci.yml")["jobs"]["image"]["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .find_map(|step| step["with"]["retention-days"].as_u64())
+        .expect("a retention");
+    assert_eq!(days, 7);
+    assert!(document.contains("They are kept for seven days."));
+    // The runners of Open-Breach are recorded as self-hosted.
+    assert!(document.contains("Do not add `--deny-self-hosted-runners`"));
+
+    assert_every_registry_is_the_one_for_examples(&document);
+}
+
+/// What `needs` names, whether it is one job or a list.
+fn needs(job: &Value) -> Vec<&str> {
+    match &job["needs"] {
+        Value::String(one) => vec![one.as_str()],
+        Value::Array(several) => several
+            .iter()
+            .map(|job| job.as_str().expect("a job"))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+// image-release, "A version tag starts a release", scenarios "Version tag",
+// "Change to a branch" and "Another tag", and "Only a checked image is
+// published", scenario "A check fails"; task 3.2. Only a tag that begins
+// with `v` starts the release workflow, no other workflow starts for a tag,
+// and its jobs run in the order verify, checks, publish.
+#[test]
+fn release_starts_for_version_tags_only_and_publishes_after_the_checks() {
+    let release = workflow("release.yml");
+    assert_eq!(
+        release["on"],
+        serde_json::json!({ "push": { "tags": ["v*"] } }),
+        "nothing but a pushed tag that begins with v"
+    );
+    for (file, workflow) in workflows() {
+        if file != "release.yml" {
+            let push = &workflow["on"]["push"];
+            assert!(
+                push.get("tags").is_none() && push.get("branches").is_some(),
+                "{file} does not start for a tag"
+            );
+        }
+    }
+
+    // One release at a time, and a release that is running is not cancelled.
+    assert_eq!(
+        release["concurrency"],
+        serde_json::json!({ "group": "release", "cancel-in-progress": false })
+    );
+
+    let jobs = jobs(&release);
+    let names: Vec<&str> = jobs.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["verify", "checks", "publish"]);
+    let job = |name: &str| &release["jobs"][name];
+    assert!(needs(job("verify")).is_empty(), "verify comes first");
+    assert_eq!(needs(job("checks")), ["verify"]);
+    assert_eq!(needs(job("publish")), ["verify", "checks"]);
+    // No job runs although one it needs has failed.
+    for (name, job) in &jobs {
+        assert!(job.get("if").is_none(), "{name} has no condition");
+        assert!(job.get("continue-on-error").is_none(), "{name}");
+    }
+
+    // The checks are the CI workflow itself, not a copy of its jobs, and
+    // they are handed no secret.
+    assert_eq!(job("checks")["uses"], "./.github/workflows/ci.yml");
+    assert!(job("checks").get("secrets").is_none());
+    assert!(job("checks").get("with").is_none());
+
+    // verify has the history of main, and checks the tag that was pushed.
+    let verify = steps(job("verify"));
+    assert_eq!(
+        verify[0]["with"]["fetch-depth"], 0,
+        "not a shallow checkout"
+    );
+    let check = verify.last().expect("a step");
+    assert_eq!(
+        check["run"],
+        ".github/scripts/check-release-tag.sh \"$TAG\""
+    );
+    assert_eq!(
+        check["env"],
+        serde_json::json!({ "TAG": "${{ github.ref_name }}" })
+    );
+    assert_eq!(
+        job("verify")["outputs"],
+        serde_json::json!({ "version": "${{ steps.tag.outputs.version }}" })
+    );
+    assert_eq!(check["id"], "tag");
+
+    // publish takes the version from verify and the images from the checks
+    // of the same run.
+    let publish = steps(job("publish"));
+    let download = publish
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("actions/download-artifact@"))
+        })
+        .expect("the step that fetches the images");
+    assert_eq!(download["with"]["pattern"], "image-linux-*");
+    assert!(download["with"].get("run-id").is_none(), "of this run");
+    let script = publish
+        .iter()
+        .find(|step| step["id"] == "publish")
+        .expect("the step that publishes");
+    assert_eq!(
+        script["run"],
+        ".github/scripts/publish-image.sh \"$VERSION\" \\\n  \
+         \"$RUNNER_TEMP/images/image-linux-amd64.tar\" \\\n  \
+         \"$RUNNER_TEMP/images/image-linux-arm64.tar\"\n"
+    );
+    assert_eq!(
+        script["env"]["VERSION"],
+        "${{ needs.verify.outputs.version }}"
+    );
+}
+
+// image-release, "Registry settings come from the environment's secrets",
+// scenario "Repository contents", and "Publishing waits behind one
+// approval", scenarios "Release waits" and "Pull request"; task 3.3.
+// Exactly one job in any workflow has the environment `release` or a
+// registry secret, and every other job only reads.
+#[test]
+fn only_the_publishing_job_has_the_environment_and_the_registry_secrets() {
+    let read_only = serde_json::json!({ "contents": "read" });
+    let mut with_environment = Vec::new();
+    for (file, workflow) in workflows() {
+        assert_eq!(workflow["permissions"], read_only, "{file}");
+        let text = repository_file(&format!(".github/workflows/{file}"));
+        assert!(!text.contains("secrets: inherit"), "{file}");
+        for (name, job) in jobs(&workflow) {
+            let publishing = file == "release.yml" && name == "publish";
+            if job.get("environment").is_some() {
+                with_environment.push((file.clone(), name.clone()));
+            }
+            let job_text = serde_json::to_string(job).expect("JSON");
+            assert_eq!(
+                job_text.contains("secrets."),
+                publishing,
+                "{file}: whether {name} reads a secret"
+            );
+            if !publishing {
+                assert!(
+                    job.get("permissions").is_none(),
+                    "{file}: {name} only reads"
+                );
+                assert!(job.get("secrets").is_none(), "{file}: {name}");
+            }
+        }
+    }
+    assert_eq!(
+        with_environment,
+        [("release.yml".to_owned(), "publish".to_owned())]
+    );
+
+    let release = workflow("release.yml");
+    let publish = &release["jobs"]["publish"];
+    assert_eq!(publish["environment"], "release");
+    // What an attestation needs, and nothing else.
+    assert_eq!(
+        publish["permissions"],
+        serde_json::json!({ "contents": "read", "id-token": "write", "attestations": "write" })
+    );
+
+    // The three secrets, each handed to the one step that publishes, under
+    // its own name and unchanged.
+    let mut handed = 0;
+    for step in steps(publish) {
+        let step_text = serde_json::to_string(step).expect("JSON");
+        if step["id"] == "publish" {
+            for name in ["REGISTRY_HOST", "REGISTRY_USERNAME", "REGISTRY_PASSWORD"] {
+                assert_eq!(step["env"][name], format!("${{{{ secrets.{name} }}}}"));
+            }
+            assert_eq!(step_text.matches("secrets.").count(), 3);
+            // The script is given the settings by the environment only: the
+            // host is not on the command line, where it would be printed.
+            assert!(
+                !step["run"]
+                    .as_str()
+                    .expect("a script")
+                    .contains("REGISTRY_")
+            );
+            handed += 1;
+        } else {
+            assert!(!step_text.contains("secrets."), "{step_text}");
+        }
+    }
+    assert_eq!(handed, 1);
+    let text = repository_file(".github/workflows/release.yml");
+    assert_eq!(text.matches("${{ secrets.").count(), 3);
+}
+
+/// The files under `.github`: the workflows and their scripts.
+fn workflow_files() -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    for directory in [".github/workflows", ".github/scripts"] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(directory);
+        for entry in fs::read_dir(path).expect(directory) {
+            let name = entry.expect("an entry").file_name();
+            let file = format!("{directory}/{}", name.to_string_lossy());
+            let text = repository_file(&file);
+            files.push((file, text));
+        }
+    }
+    files.push((
+        ".github/actionlint.yaml".to_owned(),
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/actionlint.yaml"))
+            .unwrap_or_default(),
+    ));
+    files
+}
+
+/// The word that ends at `end` in `line`: what a shell would hand on as one
+/// argument, without quotation marks.
+fn word_before(line: &str, end: usize) -> &str {
+    line[..end]
+        .rsplit(|character: char| {
+            character.is_whitespace() || matches!(character, '"' | '\'' | '`' | '(' | '[' | '=')
+        })
+        .next()
+        .unwrap_or_default()
+}
+
+// image-release, "Nothing else names the registry" and "Registry settings
+// come from the environment's secrets", scenario "Repository contents", and
+// "The project publishes no image", scenario "Workflows"; task 3.3. No
+// workflow and no script names a registry: not as the host of an image, not
+// in an address, and not as one of the public registries.
+#[test]
+fn no_workflow_or_script_names_a_registry() {
+    // Hosts that an address may name: the one for examples, the machine
+    // itself, and where the linter is downloaded from.
+    const ADDRESSES: [&str; 4] = ["registry.example.com", "localhost", "$host", "github.com"];
+    // What may stand before `/butterbot`: a variable that holds the host
+    // that was given, or the host for examples.
+    const IMAGE_HOSTS: [&str; 4] = [
+        "$REGISTRY_HOST",
+        "<REGISTRY_HOST>",
+        "$host",
+        "registry.example.com",
+    ];
+    const PUBLIC_REGISTRIES: [&str; 9] = [
+        "docker.io",
+        "ghcr.io",
+        "quay.io",
+        "gcr.io",
+        "pkg.dev",
+        "azurecr.io",
+        "amazonaws.com",
+        "mcr.microsoft.com",
+        "registry.gitlab.com",
+    ];
+    let mut images = 0;
+    for (file, text) in workflow_files() {
+        for (number, line) in text.lines().enumerate() {
+            let place = format!("{file}:{}: {line}", number + 1);
+            for registry in PUBLIC_REGISTRIES {
+                assert!(!line.contains(registry), "a public registry in {place}");
+            }
+            // An image `<host>/butterbot`.
+            for (position, _) in line.match_indices("/butterbot") {
+                let rest = &line[position + "/butterbot".len()..];
+                if rest.starts_with(['/', '-', '.']) && !rest.starts_with(".git") {
+                    // A path such as /butterbot/tags/list of the registry's
+                    // interface, or a file name.
+                    continue;
+                }
+                let host = word_before(line, position);
+                if host.ends_with("github.com/Open-Breach")
+                    || host.ends_with("/v2")
+                    || host.is_empty()
+                {
+                    continue;
+                }
+                assert!(IMAGE_HOSTS.contains(&host), "the host {host} in {place}");
+                images += 1;
+            }
+            // An address: a scheme, `://` and a host.
+            for (position, _) in line.match_indices("://") {
+                if !line[..position].ends_with(|character: char| character.is_ascii_alphabetic()) {
+                    continue;
+                }
+                let host: String = line[position + 3..]
+                    .chars()
+                    .take_while(|character| !matches!(character, '/' | '"' | '\'' | ' ' | ':'))
+                    .collect();
+                assert!(
+                    ADDRESSES.contains(&host.as_str()),
+                    "the address {host} in {place}"
+                );
+            }
+            // A login names its registry as an argument.
+            for command in ["docker login ", "docker logout "] {
+                if let Some(position) = line.find(command) {
+                    let argument = line[position + command.len()..]
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .trim_matches('"');
+                    assert!(
+                        argument == "$REGISTRY_HOST" || argument == "$host",
+                        "the registry of a login in {place}"
+                    );
+                }
+            }
+        }
+    }
+    assert!(images > 0, "the search finds the image where it is named");
+}
+
+// image-release, "The release is attested", scenario "Attestation
+// recorded", and "Nothing else names the registry"; task 3.4. The last step
+// of the publishing job attests the digest that the publishing step handed
+// on, under the name `butterbot`, and does not push the attestation to the
+// registry. Nothing else attests.
+#[test]
+fn release_attests_the_published_digest_under_the_bare_image_name() {
+    let release = workflow("release.yml");
+    let publish = steps(&release["jobs"]["publish"]);
+    let attest = publish.last().expect("a step");
+    assert!(
+        attest["uses"]
+            .as_str()
+            .expect("an action")
+            .starts_with("actions/attest@"),
+        "{}",
+        attest["uses"]
+    );
+    assert_eq!(
+        attest["with"],
+        serde_json::json!({
+            "subject-name": "butterbot",
+            "subject-digest": "${{ steps.publish.outputs.digest }}",
+            "push-to-registry": false,
+        })
+    );
+    assert!(
+        attest.get("env").is_none(),
+        "it is given no registry setting"
+    );
+    assert!(
+        attest.get("if").is_none(),
+        "it runs when the image is published"
+    );
+    let published = publish
+        .iter()
+        .position(|step| step["id"] == "publish")
+        .expect("the step that publishes");
+    assert_eq!(
+        published + 2,
+        publish.len(),
+        "right after the publishing step"
+    );
+    // The digest it attests is the one the script wrote to its outputs.
+    assert!(
+        repository_file(".github/scripts/publish-image.sh")
+            .contains("printf 'digest=%s\\n' \"$digest\" >> \"${GITHUB_OUTPUT:-/dev/null}\"")
+    );
+
+    let mut attesting = 0;
+    for (file, workflow) in workflows() {
+        for (name, job) in jobs(&workflow) {
+            if job.get("uses").is_some() {
+                continue;
+            }
+            for step in steps(job) {
+                if step["uses"]
+                    .as_str()
+                    .is_some_and(|uses| uses.contains("attest"))
+                {
+                    assert_eq!((file.as_str(), name.as_str()), ("release.yml", "publish"));
+                    attesting += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(attesting, 1);
 }
