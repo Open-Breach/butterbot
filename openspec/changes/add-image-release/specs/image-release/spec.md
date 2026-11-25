@@ -7,7 +7,7 @@ Defines how a released version of Butterbot becomes a container image in a priva
 ## ADDED Requirements
 
 ### Requirement: A version tag starts a release
-A release SHALL start when a tag of the form `v<version>` is pushed, where `<version>` is a semantic version such as `0.1.0` or `0.2.0-rc.1`. Nothing else SHALL start a release: not a push to a branch, not a pull request, and not a tag of another form.
+A release SHALL start when a tag of the form `v<version>` is pushed, where `<version>` is a semantic version such as `0.1.0` or `0.2.0-rc.1`, without build metadata: an image tag cannot contain `+`. Nothing else SHALL start a release: not a push to a branch, not a pull request, and not a tag of another form. A tag that begins with `v` but is not of that form SHALL be refused by the first job of the release, before anything is built.
 
 #### Scenario: Version tag
 - **WHEN** the tag `v0.1.0` is pushed
@@ -20,6 +20,10 @@ A release SHALL start when a tag of the form `v<version>` is pushed, where `<ver
 #### Scenario: Another tag
 - **WHEN** the tag `experiment-1` is pushed
 - **THEN** no release starts
+
+#### Scenario: Tag that only looks like a version
+- **WHEN** the tag `v1`, `vfoo` or `v0.1.0+build.5` is pushed
+- **THEN** the release fails in its first job with a message saying that the tag is not a version tag, and nothing is built or published
 
 ### Requirement: The tag matches the program and lies on main
 Before anything is built, a release SHALL fail when the version in the tag differs from the version of the program at the tagged commit, or when the tagged commit is not contained in the `main` branch. The failure message SHALL say which of the two it is.
