@@ -24,13 +24,27 @@ The first version is implemented, from an [OpenSpec](https://github.com/Fission-
 
 A second change adds the webhook notifier, which sends the events of a run to Microsoft Teams or to another HTTP endpoint: [proposal](openspec/changes/add-webhook-notifier/proposal.md), [design](openspec/changes/add-webhook-notifier/design.md), [specs](openspec/changes/add-webhook-notifier/specs/) and [tasks](openspec/changes/add-webhook-notifier/tasks.md). It has been tested against a local test server, and a test event has been delivered to a real Teams workflow. A real failure has not yet been delivered to one.
 
+A third change adds a release workflow, which publishes the container image of a version to a private registry when a version tag is pushed: [proposal](openspec/changes/add-image-release/proposal.md), [design](openspec/changes/add-image-release/design.md), [specs](openspec/changes/add-image-release/specs/) and [tasks](openspec/changes/add-image-release/tasks.md). Its publishing steps run on every change against a registry that exists only for that run. No release has been cut yet.
+
 It has been tested against an ACME test server. It has not yet run against a public certificate authority.
+
+## Getting Butterbot
+
+Butterbot is a console application, and it is built from source. With a [Rust toolchain](https://rustup.rs), in a copy of this repository:
+
+```sh
+cargo build --release
+```
+
+The program is `target/release/butterbot`. Put it on your `PATH`. The cryptography library needs a C compiler and CMake to build.
+
+The project publishes no container image, and no prebuilt program. Butterbot packs easily into a container, though: it is one statically linked program and needs nothing beside it. The repository has the `Dockerfile`, and [Deployment](docs/deployment.md) has the commands for building an image from it.
 
 ## Quick start
 
 This example gets a wildcard certificate from the Let's Encrypt staging server, proves ownership through Cloudflare, and writes the certificate into a directory. Replace `example.com` with a domain whose DNS zone is at Cloudflare. Certificates from the staging server are for testing and are not trusted by browsers.
 
-Build the program with `cargo build --release` and put `target/release/butterbot` on your `PATH`. To run it as a container instead, see [Deployment](docs/deployment.md).
+It runs the program you have built; see [Getting Butterbot](#getting-butterbot).
 
 **1. Write the configuration.** Save this as `butterbot.toml`:
 
@@ -155,8 +169,8 @@ With Let's Encrypt the suggested window opens when about a third of the lifetime
 - [Providers](docs/providers.md): each ACME, DNS and store type, with the permissions it needs.
 - [Events](docs/events.md): the events a run writes to the log, and how to monitor that the job runs.
 - [Notifications](docs/notifications.md): sending the events to Microsoft Teams or to another HTTP endpoint.
-- [Deployment](docs/deployment.md): the container image, a Kubernetes CronJob, and the steps for replacing an existing certificate job.
-- [Releasing](docs/releasing.md): how a version becomes a container image in a private registry.
+- [Deployment](docs/deployment.md): building a container image, a Kubernetes CronJob, and the steps for replacing an existing certificate job.
+- [Releasing](docs/releasing.md): for maintainers with a registry of their own, how a version tag becomes a container image there.
 
 ## Development
 
